@@ -32,9 +32,7 @@ looks things up. Then she checks that it really happened before she tells you it
 It's a native Windows app written in **Rust** on **Tauri 2**, with her body drawn in **TypeScript** and **PixiJS**.
 
 > [!TIP]
-> **She works best with Claude Code.** Capri is tuned for Claude (your Pro or Max plan, through Claude Code) as her
-> smart brain: that's the one that gets real jobs done inside your apps. NVIDIA's free key comes second. The other
-> brains work for talk and simple jobs, and tuning for them is coming in future updates. [Which brain to pick](#her-brains)
+> She works best with **Claude Code** as her brain. [Which brain to pick](#her-brains)
 
 <br>
 
@@ -100,9 +98,8 @@ It's a native Windows app written in **Rust** on **Tauri 2**, with her body draw
    needed. Windows SmartScreen may warn you because the installer isn't code signed yet: choose **More info**, then
    **Run anyway**.
 2. **First start:** she downloads her ears and voice (about 1 GB, once), with the progress in her panel.
-3. **Her brain:** she offers to install Ollama (about 2 GB) and the model that fits your graphics card (2 to 6 GB) to
-   talk and think on your PC. For jobs inside your apps, give her **Claude** in **Settings › Brain** (your Claude Pro
-   or Max plan, with [Claude Code](https://claude.com/claude-code) installed): [she works best with it](#her-brains).
+3. **Her brain:** pick **Claude** in **Settings › Brain** (needs [Claude Code](https://claude.com/claude-code) and a
+   Claude Pro or Max plan). She also offers a local brain through Ollama for talk and quick commands.
 
 Then just talk to her:
 
@@ -132,29 +129,22 @@ Every key can be changed in **Settings › Keys**. Right-click her or her tray i
 
 ## Her brains
 
-**She works best with Claude Code for now.** Her smart brain does the real jobs, the ones with several steps or inside
-an app, and Capri has been tuned on Claude doing them:
+| Smart brain | |
+|---|---|
+| **Claude Code** (Claude Pro or Max) | Best. What she's tuned for. |
+| **NVIDIA** (free key) | Second. Fast, less reliable on long jobs. |
+| **Cursor** (Cursor plan) | Slow with screenshots. |
+| **Everything else** | Talk and simple jobs. Better support coming. |
 
-| | Smart brain | How she does with it |
-|---|---|---|
-| **1** | **Claude**, through Claude Code (your Pro or Max plan, no key) | **What she's tuned for.** 1–7 s a step. "Open Steam and download Celeste": done in 50 seconds, including spotting its own missed click and fixing it. |
-| **2** | **NVIDIA**, Nemotron Super VL (a free key) | Quick, 3–6 s a step, and sees your screen. Less steady on long jobs: it can wander and get stuck. |
-| **3** | Everything else: Groq, Gemini, OpenRouter, the Claude API, OpenAI, DeepSeek, Mistral, Ollama Cloud, models on your PC | Fine for talk and simple jobs. Tuning for each comes in future updates. |
-| | **Cursor** (your plan) | Slow with screenshots: its agent opens each one with a tool of its own, 20 seconds to a minute a look, so jobs inside apps drag. |
-
-Whichever you pick, she keeps at a job until it's done (up to 25 minutes, or until you say stop): a dead end or an "I
-couldn't" sends the brain back to try another way.
-
-**Any brain you like still works.** Out of the box she chooses a model that fits your PC, and in **Settings › Brain** you
-can swap it for any model on your PC or online, from a list or by its name. No config files.
+She has three brains, each set in **Settings › Brain**:
 
 | | |
 |---|---|
-| **Fast** | Every request goes here first: talk and simple commands. |
-| **Smart** | Plans the real jobs, the ones with several steps or inside an app, and takes over when the fast one gets stuck. Optional. |
-| **Eyes** | A vision model that looks at a window to find what to click. Optional. |
+| **Fast** | Talk and simple commands. Every request goes here first. |
+| **Smart** | Jobs with several steps or inside an app. Optional. |
+| **Eyes** | A vision model that finds what to click. Optional. |
 
-Where they can come from:
+Each can be:
 
 | | |
 |---|---|
@@ -164,7 +154,7 @@ Where they can come from:
 | **Paid keys** | Claude API, OpenAI, DeepSeek |
 | **Anything else** | Any OpenAI-compatible server, by its address |
 
-Or type the one you want:
+Or type one by name:
 
 ```text
 ollama/qwen3:14b                      a model in Ollama
@@ -173,10 +163,8 @@ groq/llama-3.3-70b-versatile          any model of a provider you have a key for
 http://127.0.0.1:5000/v1#my-model     any OpenAI-compatible server
 ```
 
-Her own pick is Qwen3-VL, which also gives her eyes, sized for your graphics card: 8B on an 8 GB card, 4B on 6 GB, 2B
-on 4 GB, and on the processor when there's no card. Choose your own and she keeps it. Once she's on a smart brain she
-stays on it; she never switches to another one by herself. A daily cap on her cloud requests (200 unless you change it)
-keeps a paid smart brain from running up a bill.
+Her default is Qwen3-VL on your PC, sized for your graphics card. A daily cap on cloud requests (200) keeps a paid brain
+from running up a bill.
 
 <p align="center">
   <img src="docs/media/settings-brain.png" alt="Settings: choosing her brain" width="49%">
