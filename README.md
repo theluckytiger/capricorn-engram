@@ -32,7 +32,7 @@ looks things up. Then she checks that it really happened before she tells you it
 It's a native Windows app written in **Rust** on **Tauri 2**, with her body drawn in **TypeScript** and **PixiJS**.
 
 > [!TIP]
-> She works best with **Claude Code** as her brain. [Which brain to pick](#her-brains)
+> She is optimized to work best with **Claude Code** as her smart brain, even in hybrid mode (local + cloud). [Which brain to pick](#her-brains)
 
 <br>
 
@@ -94,7 +94,7 @@ It's a native Windows app written in **Rust** on **Tauri 2**, with her body draw
 
 ## Get started
 
-1. **[Download the installer](../../releases/latest)** (`Capricorn_1.0.1_x64-setup.exe`) and run it. No admin rights
+1. **[Download the installer](../../releases/latest)** and run it. No admin rights
    needed. Windows SmartScreen may warn you because the installer isn't code signed yet: choose **More info**, then
    **Run anyway**.
 2. **First start:** she downloads her ears and voice (about 1 GB, once), with the progress in her panel.
