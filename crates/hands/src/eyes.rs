@@ -63,6 +63,16 @@ pub fn png_file(rgb: &[u8], width: u32, height: u32, max_side: u32) -> Result<(V
     Ok((png, w, h))
 }
 
+/// A picture of hers (base64 PNG) as a JPEG, a tenth of the size: a 1 MB window shot stalled Cursor's connection.
+pub fn as_jpeg(png_base64: &str) -> Option<String> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(png_base64).ok()?;
+    let picture = image::load_from_memory(&bytes).ok()?.to_rgb8();
+    let mut out = std::io::Cursor::new(Vec::new());
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 85).encode_image(&picture).ok()?;
+    Some(base64::engine::general_purpose::STANDARD.encode(out.into_inner()))
+}
+
 /// Area averaging: each new pixel is the mean of the old ones it covers.
 fn shrink(rgb: &[u8], w: u32, h: u32, nw: u32, nh: u32) -> Vec<u8> {
     let mut out = Vec::with_capacity((nw * nh * 3) as usize);

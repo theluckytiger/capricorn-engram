@@ -101,6 +101,8 @@ pub struct Ctx {
     pub screens_to_cloud: bool,
     /// Something she noticed on her own, for her to say (watching along).
     pub aside: Option<Aside>,
+    /// The longest side of `look`'s pictures, when not her usual: smaller for a brain that's slow with big ones.
+    pub picture_side: Option<u32>,
 }
 
 #[async_trait]

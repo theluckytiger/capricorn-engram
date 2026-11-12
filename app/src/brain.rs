@@ -69,7 +69,8 @@ impl Mind {
         // or eyes set to a cloud model that screenshots may not go to on their own.
         // (Not the 8B on this PC, which is also a "-vl": it took this place, and the online brain's eyes were never offered.)
         let on_this_pc = |id: &str| ["ollama/", "lmstudio/", "llamacpp/", "vllm/"].iter().any(|p| id.starts_with(p));
-        let sees = |id: &str| !on_this_pc(id) && (["gemini/", "anthropic/", "openai/", "claudecode/", "cursor/"].iter().any(|p| id.starts_with(p)) || id.contains("llama-4") || id.contains("-vl"));
+        // (Not Cursor's agent either: about a minute a picture.)
+        let sees = |id: &str| !on_this_pc(id) && (["gemini/", "anthropic/", "openai/", "claudecode/"].iter().any(|p| id.starts_with(p)) || id.contains("llama-4") || id.contains("-vl"));
         let cloud_eyes = [settings.brain.eyes.as_deref(), settings.brain.smart.as_deref(), Some(settings.brain.fast.as_str())].into_iter().flatten().find(|id| sees(id) && settings.brain.cloud && !settings.privacy.screenshots_to_cloud);
         if let Some(id) = cloud_eyes
             && let Ok(m) = providers::model(id, &keys)

@@ -88,15 +88,15 @@ let models: string[] = [];
 const SERVERS: Record<string, string> = { lmstudio: "LM Studio", llamacpp: "llama.cpp", vllm: "vLLM", gemini: "Gemini", groq: "Groq" };
 /** Cloud providers she can use as her online brain, free key or paid: what each is, and what it's good for. */
 const ONLINE: { id: string; name: string; tag: "Free" | "Paid" | "Free & paid" | "Your plan"; line: string; rec?: string }[] = [
-  { id: "claudecode", name: "Claude", tag: "Your plan", line: "Your Claude Pro or Max plan, through Claude Code on this PC: Sonnet for hard jobs, Opus when it gets stuck. No key, no extra cost.", rec: "Smartest" },
-  { id: "cursor", name: "Cursor", tag: "Your plan", line: "Your Cursor plan, through Cursor's agent on this PC. No key. Pick Auto or Composer to keep it cheap." },
-  { id: "codex", name: "Codex", tag: "Your plan", line: "Your ChatGPT plan, through Codex on this PC. No key. Install it and run codex login first." },
-  { id: "ollamacloud", name: "Ollama cloud", tag: "Free", line: "Big open models on Ollama's servers, nothing to download. Sign in to Ollama once (in a terminal: ollama signin)." },
-  { id: "groq", name: "Groq", tag: "Free", line: "About 1,000 requests a day, and very fast. Open models that are good with tools.", rec: "Best free" },
+  { id: "claudecode", name: "Claude", tag: "Your plan", line: "What she's tuned for: your Claude Pro or Max plan, through Claude Code on this PC. Sonnet for hard jobs, Opus when it gets stuck. No key, no extra cost.", rec: "Works best" },
+  { id: "nvidia", name: "NVIDIA", tag: "Free", line: "Quick and free: Nemotron Super, which sees your screen. Less steady than Claude on long jobs. A key from build.nvidia.com.", rec: "Second best" },
+  { id: "groq", name: "Groq", tag: "Free", line: "About 1,000 requests a day, and very fast. Open models that are good with tools." },
   { id: "gemini", name: "Google Gemini", tag: "Free", line: "Sees pictures. The free tier is small: about 20 requests a day per model, a few hard jobs." },
-  { id: "anthropic", name: "Claude API", tag: "Paid", line: "Claude with an API key, paid per use; she only calls it for what you choose below. (A Claude plan is the card above.)" },
-  { id: "nvidia", name: "NVIDIA", tag: "Free", line: "Big open models for free, Nemotron Super that also sees your screen. A key from build.nvidia.com." },
+  { id: "anthropic", name: "Claude API", tag: "Paid", line: "Claude with an API key, paid per use; she only calls it for what you choose below. (A Claude plan is the first card.)" },
   { id: "openai", name: "OpenAI", tag: "Paid", line: "A strong all-rounder that sees pictures. Pay per use." },
+  { id: "ollamacloud", name: "Ollama cloud", tag: "Free", line: "Big open models on Ollama's servers, nothing to download. Sign in to Ollama once (in a terminal: ollama signin)." },
+  { id: "codex", name: "Codex", tag: "Your plan", line: "Your ChatGPT plan, through Codex on this PC. No key. Install it and run codex login first." },
+  { id: "cursor", name: "Cursor", tag: "Your plan", line: "Your Cursor plan, through Cursor's agent on this PC. No key. Fine for talk and quick jobs, but slow with screenshots (20 s to a minute each look), so jobs inside apps drag." },
   { id: "openrouter", name: "OpenRouter", tag: "Free & paid", line: "One key for hundreds of models from every lab, some of them free." },
   { id: "deepseek", name: "DeepSeek", tag: "Paid", line: "Very cheap and good at reasoning. Doesn't see pictures." },
   { id: "mistral", name: "Mistral", tag: "Free & paid", line: "European, with a free tier to try it out." },
@@ -464,7 +464,7 @@ function onlineBrain(el: HTMLElement) {
   el.insertAdjacentHTML(
     "afterbegin",
     `<h2>Online brain</h2>
-     <p class="lead">Cloud models are far smarter than what most PCs can run. Give her one with your API key, free or paid: it works the same either way.</p>
+     <p class="lead">She works best with Claude, through Claude Code on your Pro or Max plan: she's tuned for it. NVIDIA's free key comes second. The others work for talk and simple jobs, and tuning for them is coming in future updates.</p>
      <ul class="points">
        <li><b>For hard jobs</b>: clicking around in apps, anything with several steps. Quick commands and chat stay on your PC.</li>
        <li><b>For everything</b>: all her thinking goes online, and your graphics card stays free for games.</li>

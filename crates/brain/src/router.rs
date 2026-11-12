@@ -112,6 +112,13 @@ impl Brain {
         }
     }
 
+    /// Her online brains get ready in the background, before her first request (Cursor's agent takes 15 s to start).
+    pub async fn warm(&self) {
+        for m in [Some(&self.fast), self.smart.as_ref()].into_iter().flatten().filter(|m| !m.local()) {
+            m.warm().await;
+        }
+    }
+
     /// Frees the GPU of every local model of hers (a game started, or she's quitting).
     pub async fn unload(&self) {
         for m in [Some(&self.fast), self.smart.as_ref(), self.eyes.as_ref()].into_iter().flatten().filter(|m| m.local()) {

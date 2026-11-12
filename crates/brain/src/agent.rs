@@ -36,6 +36,7 @@ app's name. If no window is in front (everything is minimized), say so instead o
 delete to remove it, then type_text the new text. \"Select the text, remove it and type X\" is all three of those.
 - Games and apps start with open, by their name (\"start Warzone\", \"play Call of Duty\"): it finds every store's games.
 - You can see: to know what a window shows (a game, a video, a launcher, a page, an error), use see with a question. click works on anything visible, even in windows whose controls can't be read (it looks when it must): describe the thing as it looks (\"the PLAY button\", \"the third video thumbnail\").
+- Prices, names, numbers and lists you're asked about are read exactly with read_window (with `find` for the words that matter: \"€\", \"GTA\"), never off a picture: small text in a picture gets misread (€19.19 was read as €18.99). \"The cheapest\" means every result compared, from the top of the list, not the first ones you happen to see; a page with a sort by price is quickest.
 - If you have look: to work inside a window, look at it, then click_at the spot you want on that picture (x, y in its
 pixels), and look again to check what it did. Use it for what has no name to click (thumbnails, videos, game and
 canvas apps, icons); click by name stays quickest for named buttons. Never click_at without a picture from this job.
@@ -182,6 +183,9 @@ pub struct Limits {
     pub persist: bool,
 }
 
+/// The longest side of `look`'s pictures for a brain slow with pictures: 1024 took Cursor 20 s, 1280 a minute.
+const SLOW_PICTURES: u32 = 1024;
+
 /// How long a persistent job may go on before she stops and says how far she got.
 const PERSIST_FOR: std::time::Duration = std::time::Duration::from_secs(25 * 60);
 /// Times a persistent brain is sent back after giving up, or after a dead end.
@@ -215,7 +219,18 @@ pub async fn run(model: &dyn Model, hands: &Hands, ctx: &Ctx, request: &str, sit
     // A brain that sees looks for itself: her small eyes' `see` is left out of its list (it's still there if you say
     // no to showing it the screen; the no says so). Two tools that both "look at a window" got the wrong one picked.
     let sees = model.sees() && !model.local();
-    let mut tools: Vec<_> = hands.specs().into_iter().filter(|t| if sees { t.name != "see" } else { !matches!(t.name.as_str(), "look" | "click_at" | "drag_at") }).collect();
+    // A brain slow with pictures (Cursor: a minute a look at full size, 20 s at 1024) keeps its own look for when it
+    // needs the real thing, smaller, and has her quick eyes on this PC too for the easy questions. Her eyes alone
+    // weren't enough for a hard job.
+    let both = sees && model.sees_slowly() && ctx.eyes.is_some();
+    let slow_ctx;
+    let ctx = if sees && model.sees_slowly() {
+        slow_ctx = Ctx { picture_side: Some(SLOW_PICTURES), ..ctx.clone() };
+        &slow_ctx
+    } else {
+        ctx
+    };
+    let mut tools: Vec<_> = hands.specs().into_iter().filter(|t| if both { true } else if sees { t.name != "see" } else { !matches!(t.name.as_str(), "look" | "click_at" | "drag_at") }).collect();
     // An online brain gets the tools this job may need; the rest are named in a line and come in when called.
     let mut left_out: Vec<ToolSpec> = Vec::new();
     let mut also = String::new();
@@ -233,6 +248,9 @@ pub async fn run(model: &dyn Model, hands: &Hands, ctx: &Ctx, request: &str, sit
     let mut shown: Vec<String> = Vec::new();
     if !model.local() {
         also.push_str("\n\nFor a job of several steps, write a one-line plan with your first tool call (\"Plan: open Steam → Library → Warzone → Play\"); when a step shows the plan is wrong, say the new one the same way.");
+    }
+    if both {
+        also.push_str("\n\nTwo ways to see a window: `see` asks her quick eyes on this PC (a few seconds) what's on it or where something is; `look` shows you the picture itself, which takes you about 20 seconds. Use see for the quick questions, and look when see's answer isn't enough or you need to click_at a spot.");
     }
     // Requests that can only mean one tool, named for the small model (it read past the rule for "let me know when…"
     // after other rules were added near it).
@@ -649,7 +667,13 @@ pub async fn run(model: &dyn Model, hands: &Hands, ctx: &Ctx, request: &str, sit
                 || (outcome.status != Status::Ok && steps.iter().filter(|s| s.tool == call.name && s.args == call.args && s.outcome.status != Status::Ok).count() >= 2);
             let mut result = Msg::tool(&call, render(&outcome), outcome.status == Status::Failed);
             if let Some(b64) = picture {
-                result.images.push(crate::llm::Image { mime: "image/png".into(), base64: b64 });
+                // An online brain gets it as a JPEG, a tenth of the PNG: sending the PNG timed out behind a download
+                // (40 s), and a full-size one stalled Cursor's connection.
+                let jpeg = (!model.local()).then(|| capri_hands::eyes::as_jpeg(&b64)).flatten();
+                result.images.push(match jpeg {
+                    Some(jpeg) => crate::llm::Image { mime: "image/jpeg".into(), base64: jpeg },
+                    None => crate::llm::Image { mime: "image/png".into(), base64: b64 },
+                });
             }
             msgs.push(result);
             // A long job is many looks: only the newest pictures go back each turn (all of them made every step slower

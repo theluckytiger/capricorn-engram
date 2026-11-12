@@ -21,7 +21,7 @@ fn path() -> Result<PathBuf> {
 
 /// All of them, soonest first.
 pub fn all() -> Vec<Reminder> {
-    let mut list: Vec<Reminder> = path().ok().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let mut list: Vec<Reminder> = path().ok().and_then(|p| crate::read_json_text(p).ok()).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
     list.sort_by_key(|r| r.due);
     list
 }

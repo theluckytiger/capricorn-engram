@@ -60,7 +60,7 @@ fn path() -> Result<PathBuf> {
 }
 
 pub fn load() -> Bond {
-    path().ok().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+    path().ok().and_then(|p| crate::read_json_text(p).ok()).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
 }
 
 fn save(b: &Bond) -> Result<()> {

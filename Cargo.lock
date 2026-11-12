@@ -525,7 +525,7 @@ dependencies = [
 
 [[package]]
 name = "capri-brain"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -545,7 +545,7 @@ dependencies = [
 
 [[package]]
 name = "capri-core"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -557,7 +557,7 @@ dependencies = [
 
 [[package]]
 name = "capri-ears"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "capri-core",
@@ -570,7 +570,7 @@ dependencies = [
 
 [[package]]
 name = "capri-hands"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -594,7 +594,7 @@ dependencies = [
 
 [[package]]
 name = "capri-voice"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "cpal",
@@ -606,7 +606,7 @@ dependencies = [
 
 [[package]]
 name = "capricorn"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "async-trait",

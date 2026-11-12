@@ -153,6 +153,9 @@ pub fn run() {
             }
             // Messages from your phone (Settings › Phone): waits quietly while that's off.
             phone::start(app.handle());
+            // Her online brain gets ready now, not on your first request.
+            let thinking = app.state::<brain::Mind>().brain();
+            tauri::async_runtime::spawn(async move { thinking.warm().await });
             // An Esc she presses in an app goes to the app, not to her own Esc that stops the job.
             #[cfg(windows)]
             {

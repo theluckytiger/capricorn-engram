@@ -155,6 +155,27 @@ fn describe(c: &Control) -> String {
     format!("{} \"{}\"{state}", c.kind, c.name)
 }
 
+/// How many of a window's controls `read_window` gives at most.
+const LISTED: usize = 150;
+
+/// A window's controls as `read_window` gives them: the named ones top to bottom, each name once where a link, its
+/// picture and its title all say the same, only those with `find`'s words when it's given (any of them). The first 80
+/// of a shop's page were its menus, and the products and prices never reached the brain.
+fn listing(cs: &[Control], find: Option<&str>) -> String {
+    let words: Vec<String> = find.map(|f| f.split([',', ' ']).map(|w| w.trim().to_lowercase()).filter(|w| !w.is_empty()).collect()).unwrap_or_default();
+    let mut seen = std::collections::HashSet::new();
+    let named: Vec<&Control> = cs.iter().filter(|c| !c.name.trim().is_empty() && seen.insert(c.name.trim().to_lowercase())).collect();
+    let wanted: Vec<&&Control> = named.iter().filter(|c| words.is_empty() || words.iter().any(|w| c.name.to_lowercase().contains(w.as_str()))).collect();
+    let list: Vec<String> = wanted.iter().take(LISTED).map(|c| describe(c)).collect();
+    let more = wanted.len().saturating_sub(LISTED);
+    let head = match find {
+        Some(f) => format!("{} of its {} controls have \"{f}\" in them.", wanted.len(), cs.len()),
+        None => format!("{} controls.", cs.len()),
+    };
+    let tail = if more > 0 { format!(" (…and {more} more: read_window again with `find` for the words you need)") } else { String::new() };
+    format!("{head} {}{tail}", list.join("; "))
+}
+
 #[cfg(windows)]
 mod tools {
     use super::*;
@@ -177,10 +198,15 @@ mod tools {
         fn spec(&self) -> ToolSpec {
             ToolSpec {
                 name: "read_window".into(),
-                description: "List the buttons, fields, links, tabs and switches of a window (its real controls, with their \
-                              on/off state), to see what can be pressed. `window` is the app's name, words of its title, or \"front\"."
+                description: "Read a window exactly: its buttons, fields, links, tabs and switches (with their on/off state) and \
+                              the text on it (a page's names and prices), top to bottom. `window` is the app's name, words of its \
+                              title, or \"front\". `find`: only what has these words in it (\"€\", \"GTA\"), for a long page."
                     .into(),
-                parameters: json!({ "type": "object", "properties": { "window": { "type": "string" } }, "required": ["window"] }),
+                parameters: json!({
+                    "type": "object",
+                    "properties": { "window": { "type": "string" }, "find": { "type": "string" } },
+                    "required": ["window"]
+                }),
             }
         }
 
@@ -193,13 +219,15 @@ mod tools {
                 Ok(w) => w,
                 Err(o) => return o,
             };
+            let find: Option<String> = opt_arg::<String>(&args, "find").filter(|f| !f.trim().is_empty());
             let ctx = ctx.clone();
             blocking(move || {
                 let w = match window_of(&ctx, &window) {
                     Ok(w) => w,
                     Err(o) => return o,
                 };
-                match platform::controls(w.id, 400) {
+                // A shop's results page is 500 controls: at 400 its products were cut off.
+                match platform::controls(w.id, 2000) {
                     Ok(cs) if cs.iter().filter(|c| !c.name.is_empty()).count() < 4 => {
                         // It draws its own (a game, a launcher, an Electron app): the words on its picture instead.
                         let words: Vec<String> = platform::capture(w.id).ok().and_then(|s| platform::ocr::read(&s).ok()).unwrap_or_default().into_iter().map(|l| l.text).filter(|t| t.chars().any(char::is_alphanumeric)).take(120).collect();
@@ -209,10 +237,7 @@ mod tools {
                             Outcome::ok(format!("{} \"{}\" draws its own controls; the words on it, top to bottom (click finds them by these words): {}", w.app, w.title, words.join(" | ")))
                         }
                     }
-                    Ok(cs) => {
-                        let list: Vec<String> = cs.iter().filter(|c| !c.name.is_empty()).take(80).map(describe).collect();
-                        Outcome::ok(format!("{} \"{}\": {} controls. {}", w.app, w.title, cs.len(), list.join("; ")))
-                    }
+                    Ok(cs) => Outcome::ok(format!("{} \"{}\": {}", w.app, w.title, listing(&cs, find.as_deref()))),
                     Err(e) => Outcome::failed(format!("couldn't read {}: {e:#}", w.app)),
                 }
             })
@@ -464,6 +489,24 @@ mod tests {
 
     fn c(i: usize, name: &str, kind: &str) -> Control {
         Control { index: i, name: name.into(), kind: kind.into(), rect: [0, 0, 10, 10], enabled: true, toggled: None, focused: false, id: String::new() }
+    }
+
+    #[test]
+    fn a_shop_page_reads_to_its_prices() {
+        // Loaded.com's results for "GTA 5": a hundred menu links first, then each product as a link, its picture, the
+        // link again and its price.
+        let mut cs: Vec<Control> = (0..100).map(|i| c(i, &format!("Menu link {i}"), "link")).collect();
+        for (name, price) in [("GRAND THEFT AUTO V ENHANCED PC", "€10.19"), ("GRAND THEFT AUTO V XBOX SERIES X|S (WW)", "€19.19")] {
+            for kind in ["link", "image", "link"] {
+                cs.push(c(cs.len(), name, kind));
+            }
+            cs.push(c(cs.len(), price, "text"));
+        }
+        let all = listing(&cs, None);
+        assert!(all.contains("€10.19") && all.matches("ENHANCED PC").count() == 1, "{all}");
+        let prices = listing(&cs, Some("€"));
+        assert!(prices.starts_with("2 of its 108 controls"), "{prices}");
+        assert!(listing(&cs, Some("gta, grand theft")).contains("XBOX SERIES"));
     }
 
     #[test]

@@ -139,9 +139,16 @@ pub trait Model: Send + Sync {
     fn sees(&self) -> bool {
         false
     }
+    /// Seeing a picture takes it a long while (Cursor's agent opens it with a tool of its own and thinks again: a minute
+    /// a look at full size): its pictures are smaller, and her quick eyes on this PC are there too for easy questions.
+    fn sees_slowly(&self) -> bool {
+        false
+    }
     async fn chat(&self, req: Req<'_>) -> Result<Reply>;
     /// Frees the GPU (local models); a no-op for APIs.
     async fn unload(&self) {}
+    /// Gets ready before her first request, in the background (Cursor's agent takes 15 s to start); a no-op for most.
+    async fn warm(&self) {}
 }
 
 /// Asks `model`, and writes the whole exchange to her model log (`logs\llm-YYYY-MM-DD.jsonl`): the messages sent

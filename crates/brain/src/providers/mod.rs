@@ -104,8 +104,9 @@ pub async fn online_brain(provider: &str, key: &str, model: Option<&str>) -> Res
             name = "auto";
         }
         let id = format!("{provider}/{name}");
-        // Claude Code and Cursor's agent take pictures from her; Codex hasn't been tried.
-        return Ok((id.clone(), matches!(kind, plan::Kind::Claude | plan::Kind::Cursor).then_some(id)));
+        // Claude Code sees pictures quickly and is her eyes too. Cursor's agent takes about a minute a picture: her eyes
+        // on this PC stay hers. Codex hasn't been tried.
+        return Ok((id.clone(), (kind == plan::Kind::Claude).then_some(id)));
     }
     if provider == "ollamacloud" {
         return ollama_cloud().await;

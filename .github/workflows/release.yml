@@ -36,7 +36,9 @@ jobs:
 
             **Install:** download the `x64-setup.exe` file below and run it. No admin rights needed. The installer isn't code signed yet, so Windows SmartScreen may warn you: choose **More info**, then **Run anyway**.
 
-            **First start:** she downloads her ears and voice (about 1 GB, once), then offers to install Ollama and the local brain that fits your graphics card (up to 8 GB). Or pick any brain you like in Settings › Brain: any model in Ollama, LM Studio, llama.cpp or vLLM, your Claude, Cursor or Codex plan, or a key from Groq, NVIDIA, Gemini, OpenRouter and more.
+            **First start:** she downloads her ears and voice (about 1 GB, once), then offers to install Ollama and the local brain that fits your graphics card (up to 8 GB) for talk and quick commands.
+
+            **Her smart brain:** she works best with **Claude**, through Claude Code on your Claude Pro or Max plan: pick it in Settings › Brain. NVIDIA's free key comes second. Any other brain works for talk and simple jobs (Groq, Gemini, OpenRouter, the Claude API, OpenAI, models on your PC and more), and tuning for them is coming in future updates.
 
             **Then:** say "Capri" and ask, or press Ctrl+Alt+T to type. Throw her around. Message her from Discord when you're out (Settings › Phone).
 

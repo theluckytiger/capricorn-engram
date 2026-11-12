@@ -204,30 +204,28 @@ impl Acp {
     }
 }
 
-/// Cursor's server started ahead, with a session ready, so her first job on it doesn't wait for either.
-pub fn warm_cursor(exe: PathBuf) {
-    let Ok(rt) = tokio::runtime::Handle::try_current() else { return };
-    rt.spawn(async move {
-        let Ok(dir) = folder() else { return };
-        let mut slot = acp().lock().await;
-        if slot.is_none() {
-            match Acp::start(&exe, &dir).await {
-                Ok(a) => *slot = Some(a),
-                Err(e) => {
-                    if e.to_string().starts_with(NO_SERVER) {
-                        NO_ACP.store(true, std::sync::atomic::Ordering::Relaxed);
-                    }
-                    return;
+/// Cursor's server started ahead, with a session ready, so her first job on it waits for neither.
+async fn warm_cursor(exe: &Path) {
+    let Ok(dir) = folder() else { return };
+    let mut slot = acp().lock().await;
+    if slot.is_none() {
+        match Acp::start(exe, &dir).await {
+            Ok(a) => *slot = Some(a),
+            Err(e) => {
+                if e.to_string().starts_with(NO_SERVER) {
+                    NO_ACP.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
+                tracing::warn!("Cursor's server didn't start: {e:#}");
+                return;
             }
         }
-        if let Some(server) = slot.as_mut()
-            && server.spare.is_none()
-            && let Ok(sid) = server.new_session(&dir).await
-        {
-            server.spare = Some(sid);
-        }
-    });
+    }
+    if let Some(server) = slot.as_mut()
+        && server.spare.is_none()
+        && let Ok(sid) = server.new_session(&dir).await
+    {
+        server.spare = Some(sid);
+    }
 }
 
 /// One Claude Code run, open for the turns of one job.
@@ -263,9 +261,6 @@ impl PlanBrain {
     /// `claudecode/sonnet`, `cursor/auto`: the app must be installed (signed in is checked on the first turn).
     pub fn new(id: &str, kind: Kind, model: &str) -> Result<Self> {
         let exe = find(kind).ok_or_else(|| anyhow!("{} isn't installed on this PC", app(kind)))?;
-        if kind == Kind::Cursor {
-            warm_cursor(exe.clone());
-        }
         Ok(Self { id: id.into(), kind, model: model.into(), exe, session: tokio::sync::Mutex::new(None), cursor_chat: tokio::sync::Mutex::new(None) })
     }
 }
@@ -519,6 +514,16 @@ impl Model for PlanBrain {
         matches!(self.kind, Kind::Claude | Kind::Cursor)
     }
 
+    fn sees_slowly(&self) -> bool {
+        self.kind == Kind::Cursor
+    }
+
+    async fn warm(&self) {
+        if self.kind == Kind::Cursor && !NO_ACP.load(std::sync::atomic::Ordering::Relaxed) {
+            warm_cursor(&self.exe).await;
+        }
+    }
+
     async fn chat(&self, req: Req<'_>) -> Result<Reply> {
         let dir = folder()?;
         let system = format!("{}{}", req.system, protocol(req.tools));
@@ -680,8 +685,14 @@ impl PlanBrain {
         for i in msgs.iter().rev().take_while(|m| m.role != Role::Assistant).flat_map(|m| &m.images) {
             prompt.push(json!({ "type": "image", "mimeType": i.mime, "data": i.base64 }));
         }
-        match server.call("session/prompt", json!({ "sessionId": sid, "prompt": prompt }), TURN).await {
-            Ok((_, said)) => {
+        // Its own trouble comes back as what it "said" ("Error: RetriableError: Connection stalled"): taken as its
+        // answer, that ended a job. It's an error, so the step is asked again.
+        let answer = server.call("session/prompt", json!({ "sessionId": sid, "prompt": prompt }), TURN).await.and_then(|(_, said)| match said.trim().strip_prefix("Error:") {
+            Some(trouble) if said.trim().len() < 400 => Err(anyhow!("{} had trouble:{trouble}", app(Kind::Cursor))),
+            _ => Ok(said),
+        });
+        match answer {
+            Ok(said) => {
                 *chat = job.then(|| CursorChat { id: sid, system: key, seen: prints, at: Instant::now() });
                 tracing::debug!("cursor server step: {} ms", started.elapsed().as_millis());
                 Ok((said, Usage::default()))
@@ -955,6 +966,9 @@ mod tests {
         use base64::Engine;
         let model = std::env::var("CAPRI_CURSOR_MODEL").unwrap_or_else(|_| "composer-2.5".into());
         let brain = PlanBrain::new(&format!("cursor/{model}"), Kind::Cursor, &model).unwrap();
+        let started = Instant::now();
+        brain.warm().await;
+        println!("warm: {:.1} s (at her start, in the background)", started.elapsed().as_secs_f32());
         let tools = vec![
             capri_hands::ToolSpec { name: "open".into(), description: "Open an app by name".into(), parameters: json!({ "type": "object", "properties": { "name": { "type": "string" } }, "required": ["name"] }) },
             capri_hands::ToolSpec { name: "look".into(), description: "A picture of a window".into(), parameters: json!({ "type": "object", "properties": { "window": { "type": "string" } } }) },

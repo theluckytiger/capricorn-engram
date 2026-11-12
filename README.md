@@ -11,7 +11,7 @@ Her ears, her voice and her brain can all run on your own machine.
 
 <br>
 
-[![Download for Windows](https://img.shields.io/badge/Download_for_Windows-v1.0.0-ff2a6d?style=for-the-badge&logo=windows&logoColor=white)](../../releases/latest)
+[![Download for Windows](https://img.shields.io/badge/Download_for_Windows-v1.0.1-ff2a6d?style=for-the-badge&logo=windows&logoColor=white)](../../releases/latest)
 
 [![Rust](https://img.shields.io/badge/Rust-2024-ff2a6d?style=flat-square&logo=rust&logoColor=white)](Cargo.toml)
 [![Tauri](https://img.shields.io/badge/Tauri-2-ff2a6d?style=flat-square&logo=tauri&logoColor=white)](app/tauri.conf.json)
@@ -30,6 +30,11 @@ Ask her for something and she does it on your PC: opens apps and clicks through 
 looks things up. Then she checks that it really happened before she tells you it did.
 
 It's a native Windows app written in **Rust** on **Tauri 2**, with her body drawn in **TypeScript** and **PixiJS**.
+
+> [!TIP]
+> **She works best with Claude Code.** Capri is tuned for Claude (your Pro or Max plan, through Claude Code) as her
+> smart brain: that's the one that gets real jobs done inside your apps. NVIDIA's free key comes second. The other
+> brains work for talk and simple jobs, and tuning for them is coming in future updates. [Which brain to pick](#her-brains)
 
 <br>
 
@@ -91,12 +96,13 @@ It's a native Windows app written in **Rust** on **Tauri 2**, with her body draw
 
 ## Get started
 
-1. **[Download the installer](../../releases/latest)** (`Capricorn_1.0.0_x64-setup.exe`) and run it. No admin rights
+1. **[Download the installer](../../releases/latest)** (`Capricorn_1.0.1_x64-setup.exe`) and run it. No admin rights
    needed. Windows SmartScreen may warn you because the installer isn't code signed yet: choose **More info**, then
    **Run anyway**.
 2. **First start:** she downloads her ears and voice (about 1 GB, once), with the progress in her panel.
 3. **Her brain:** she offers to install Ollama (about 2 GB) and the model that fits your graphics card (2 to 6 GB) to
-   think on your PC. Or skip it and [pick any brain you like](#her-brains), on your PC or online.
+   talk and think on your PC. For jobs inside your apps, give her **Claude** in **Settings › Brain** (your Claude Pro
+   or Max plan, with [Claude Code](https://claude.com/claude-code) installed): [she works best with it](#her-brains).
 
 Then just talk to her:
 
@@ -126,8 +132,21 @@ Every key can be changed in **Settings › Keys**. Right-click her or her tray i
 
 ## Her brains
 
-**Pick any brain you like.** Out of the box she chooses a model that fits your PC, and in **Settings › Brain** you can
-swap it for any model on your PC or online, from a list or by its name. No config files.
+**She works best with Claude Code for now.** Her smart brain does the real jobs, the ones with several steps or inside
+an app, and Capri has been tuned on Claude doing them:
+
+| | Smart brain | How she does with it |
+|---|---|---|
+| **1** | **Claude**, through Claude Code (your Pro or Max plan, no key) | **What she's tuned for.** 1–7 s a step. "Open Steam and download Celeste": done in 50 seconds, including spotting its own missed click and fixing it. |
+| **2** | **NVIDIA**, Nemotron Super VL (a free key) | Quick, 3–6 s a step, and sees your screen. Less steady on long jobs: it can wander and get stuck. |
+| **3** | Everything else: Groq, Gemini, OpenRouter, the Claude API, OpenAI, DeepSeek, Mistral, Ollama Cloud, models on your PC | Fine for talk and simple jobs. Tuning for each comes in future updates. |
+| | **Cursor** (your plan) | Slow with screenshots: its agent opens each one with a tool of its own, 20 seconds to a minute a look, so jobs inside apps drag. |
+
+Whichever you pick, she keeps at a job until it's done (up to 25 minutes, or until you say stop): a dead end or an "I
+couldn't" sends the brain back to try another way.
+
+**Any brain you like still works.** Out of the box she chooses a model that fits your PC, and in **Settings › Brain** you
+can swap it for any model on your PC or online, from a list or by its name. No config files.
 
 | | |
 |---|---|

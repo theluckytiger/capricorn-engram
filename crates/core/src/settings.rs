@@ -209,7 +209,7 @@ impl Settings {
     /// Loads the settings, or the defaults when there's no file yet. A broken file is kept aside, not overwritten.
     pub fn load() -> Result<Self> {
         let path = Self::path()?;
-        match std::fs::read_to_string(&path) {
+        match crate::read_json_text(&path) {
             Ok(text) => match serde_json::from_str(&text) {
                 Ok(s) => Ok(s),
                 Err(e) => {
@@ -253,5 +253,15 @@ mod tests {
         assert!(s.brain.cloud);
         assert_eq!(s.brain.fast, Brain::default().fast);
         assert!(!s.screens.follow_pointer);
+    }
+
+    #[test]
+    fn a_file_with_a_byte_order_mark_still_reads() {
+        let path = std::env::temp_dir().join(format!("capri-bom-{}.json", std::process::id()));
+        std::fs::write(&path, "\u{feff}{\"name\":\"Max\"}").unwrap();
+        let text = crate::read_json_text(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let s: Settings = serde_json::from_str(&text).unwrap();
+        assert_eq!(s.name.as_deref(), Some("Max"));
     }
 }

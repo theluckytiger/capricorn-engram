@@ -25,7 +25,7 @@ fn path() -> Result<PathBuf> {
 }
 
 pub fn all() -> Vec<Note> {
-    path().ok().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+    path().ok().and_then(|p| crate::read_json_text(p).ok()).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
 }
 
 fn save(notes: &[Note]) -> Result<()> {

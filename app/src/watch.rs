@@ -53,7 +53,7 @@ fn missions_path() -> Option<PathBuf> {
 #[tauri::command]
 pub fn mission_report() -> Missions {
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let m: Missions = missions_path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let m: Missions = missions_path().and_then(|p| capri_core::read_json_text(p).ok()).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
     if m.date == today { m } else { Missions { date: today, ..Default::default() } }
 }
 

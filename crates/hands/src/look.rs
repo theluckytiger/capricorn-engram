@@ -80,7 +80,7 @@ impl Tool for Look {
             Ok(s) => s,
             Err(e) => return Outcome::failed(format!("couldn't take a picture of {}: {e:#}", w.app)),
         };
-        let pic = match encode(&shot.rgb, shot.width, shot.height, MAX_SIDE) {
+        let pic = match encode(&shot.rgb, shot.width, shot.height, ctx.picture_side.unwrap_or(MAX_SIDE)) {
             Ok(p) => p,
             Err(e) => return Outcome::failed(format!("{e:#}")),
         };
