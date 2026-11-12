@@ -1,0 +1,22 @@
+[package]
+name = "capri-brain"
+description = "Her providers, router, fast path and agent loop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+base64 = "0.22"
+directories.workspace = true
+capri-core.workspace = true
+capri-hands.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+reqwest.workspace = true
+futures-util.workspace = true
+async-trait.workspace = true
+chrono.workspace = true

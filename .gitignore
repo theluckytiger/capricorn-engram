@@ -1,0 +1,21 @@
+/target/
+node_modules/
+ui/dist/
+dist/
+*.log
+.DS_Store
+Thumbs.db
+
+# her models are downloaded on her first start
+models/
+
+# Python
+__pycache__/
+.venv/
+
+# generated
+app/gen/
+art/out/
+
+# written by tools/fake_discord.py
+tools/fake_discord_file.png

@@ -1,0 +1,28 @@
+# Every push and pull request: her UI builds and typechecks, the Rust code is linted and every test passes.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # The app embeds her built UI, so it comes first.
+      - run: npm ci
+        working-directory: ui
+      - run: npm run build
+        working-directory: ui
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace

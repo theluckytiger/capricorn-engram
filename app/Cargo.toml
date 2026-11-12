@@ -1,0 +1,37 @@
+[package]
+name = "capricorn"
+description = "Capri, on your desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "capricorn_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+capri-core.workspace = true
+capri-brain.workspace = true
+capri-hands.workspace = true
+capri-ears.workspace = true
+sherpa-onnx = "2.0.1"
+capri-voice.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+directories.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+reqwest.workspace = true
+futures-util.workspace = true
+tar = "0.4"
+bzip2 = "0.6"
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-single-instance = "2"

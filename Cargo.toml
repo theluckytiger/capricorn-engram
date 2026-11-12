@@ -1,0 +1,46 @@
+[workspace]
+resolver = "3"
+members = ["app", "crates/core", "crates/brain", "crates/hands", "crates/ears", "crates/voice"]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2024"
+license = "MIT"
+authors = ["theluckytiger"]
+repository = "https://github.com/theluckytiger/capricorn-engram"
+
+[workspace.dependencies]
+capri-core = { path = "crates/core" }
+capri-brain = { path = "crates/brain" }
+capri-hands = { path = "crates/hands" }
+capri-ears = { path = "crates/ears" }
+capri-voice = { path = "crates/voice" }
+
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "fs", "io-util"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream", "query"] }
+futures-util = "0.3"
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+directories = "6"
+
+# Dependencies are built optimised even in dev: audio, vision and JSON-heavy code is painfully slow at opt-level 0,
+# and our own crates still compile fast.
+# Dev builds stay small: dependencies are optimized and carry no debug info (their .pdb files were most of a
+# 44 GB target folder); her own crates keep line tables, enough for backtraces in her logs.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 2
+debug = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

@@ -1,0 +1,50 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Capricorn",
+  "version": "1.0.0",
+  "identifier": "app.capricorn.desktop",
+  "build": {
+    "frontendDist": "../ui/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": {
+      "script": "npm run dev",
+      "cwd": "../ui"
+    },
+    "beforeBuildCommand": {
+      "script": "npm run build",
+      "cwd": "../ui"
+    }
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "installer/header.bmp",
+        "sidebarImage": "installer/sidebar.bmp"
+      }
+    },
+    "publisher": "theluckytiger",
+    "copyright": "Copyright (c) 2026 theluckytiger. MIT License.",
+    "shortDescription": "Capri on your desktop: a voice-driven AI agent with a body",
+    "longDescription": "Capricorn puts Capri on your Windows desktop: say her name, ask, and she works your PC, checks it worked, and tells you what really happened. Local AI by default.",
+    "homepage": "https://github.com/theluckytiger/capricorn-engram",
+    "category": "Utility"
+  }
+}

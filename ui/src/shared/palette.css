@@ -1,0 +1,29 @@
+/* Her colours and type, the same everywhere she draws: her overlay's panels, menu, ticker, report card and player,
+   and her settings window. The same values are in her effects (overlay/fx.ts, overlay/portrait.ts), the report
+   card's picture (overlay/main.ts reads these) and her window's title bar (hands: platform::tint_frame). */
+@import "@fontsource/chakra-petch/500.css";
+@import "@fontsource/chakra-petch/700.css";
+@import "@fontsource/jetbrains-mono/400.css";
+
+:root {
+  /* Her accent: borders, buttons, what went wrong. */
+  --crimson: #f60655;
+  /* Her shadow colour, behind every panel and button. */
+  --violet: #8a1fd1;
+  /* What's on, what worked, her name. */
+  --green: #08f562;
+  /* Her darkest: every background. */
+  --ink: #0b0614;
+  /* A step up from ink: sidebars, cards, fields. */
+  --panel: #150c22;
+  /* Quiet borders and dividers. */
+  --line: #2b1a40;
+  /* Text. */
+  --white: #fbf8fc;
+  /* Quieter text: hints, what's secondary. */
+  --dim: #a99bb8;
+  /* Violet text: thinking, a plan, a paid tag. */
+  --soft: #c9a4ff;
+  /* Not sure. */
+  --amber: #ffd23f;
+}

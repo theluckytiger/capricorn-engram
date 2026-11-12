@@ -1,0 +1,16 @@
+[package]
+name = "capri-voice"
+description = "Her voice: text to speech on this PC, a sentence at a time, and playing it"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+tracing.workspace = true
+sherpa-onnx = "2.0.1"
+cpal = "0.18"
+
+[dev-dependencies]
+directories.workspace = true

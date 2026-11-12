@@ -1,0 +1,15 @@
+[package]
+name = "capri-ears"
+description = "Her ears: the mic, voice activity, her names, speech to text"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+capri-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+sherpa-onnx = "2.0.1"
+cpal = "0.18"
