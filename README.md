@@ -32,7 +32,7 @@ looks things up. Then she checks that it really happened before she tells you it
 It's a native Windows app written in **Rust** on **Tauri 2**, with her body drawn in **TypeScript** and **PixiJS**.
 
 > [!TIP]
-> She is optimized to work best with **Claude Code** as her smart brain, even in hybrid mode (local + cloud). [Which brain to pick](#her-brains)
+> She is optimized for **Claude Code** as her smart brain, even in hybrid mode (local + cloud). [Which brain to pick](#her-brains)
 
 <br>
 
