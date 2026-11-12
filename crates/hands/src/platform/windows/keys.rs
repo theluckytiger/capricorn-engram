@@ -3,6 +3,15 @@
 use anyhow::{Result, bail};
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 
+/// What the app does around a chord of hers that holds one of its own system hotkeys (Esc stops her job): `true` lets
+/// go of them, `false` takes them back. Windows hands a hotkey to whoever registered it, even when she sends it, so her
+/// Esc for Steam stopped her own job and Steam never got it.
+static OWN_KEYS: std::sync::OnceLock<Box<dyn Fn(bool) + Send + Sync>> = std::sync::OnceLock::new();
+
+pub fn around_own_keys(f: impl Fn(bool) + Send + Sync + 'static) {
+    let _ = OWN_KEYS.set(Box::new(f));
+}
+
 /// Presses a chord ("ctrl+shift+m", "enter", "media_play_pause", "alt+f4"): modifiers down, key, all up.
 pub fn press(chord: &str) -> Result<()> {
     let names: Vec<String> = chord.split('+').map(|k| k.trim().to_lowercase()).filter(|k| !k.is_empty()).collect();
@@ -18,7 +27,17 @@ pub fn press(chord: &str) -> Result<()> {
     }
     let mut inputs: Vec<INPUT> = vks.iter().map(|&v| key(v, false)).collect();
     inputs.extend(vks.iter().rev().map(|&v| key(v, true)));
-    send(&inputs)
+    let own = vks.contains(&VK_ESCAPE).then(|| OWN_KEYS.get()).flatten();
+    if let Some(f) = own {
+        f(true);
+    }
+    let sent = send(&inputs);
+    if let Some(f) = own {
+        // The app reads the key after it's sent: taking the hotkey back at once caught the Esc all the same.
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        f(false);
+    }
+    sent
 }
 
 /// Types text as Unicode keystrokes (any language, no clipboard involved).

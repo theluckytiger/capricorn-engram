@@ -153,6 +153,26 @@ pub fn run() {
             }
             // Messages from your phone (Settings › Phone): waits quietly while that's off.
             phone::start(app.handle());
+            // An Esc she presses in an app goes to the app, not to her own Esc that stops the job.
+            #[cfg(windows)]
+            {
+                let handle = app.handle().clone();
+                let held = std::sync::atomic::AtomicBool::new(false);
+                capri_hands::platform::around_own_keys(move |sending| {
+                    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+                    let esc = tauri_plugin_global_shortcut::Shortcut::new(None, Code::Escape);
+                    let shortcuts = handle.global_shortcut();
+                    if sending {
+                        let on = shortcuts.is_registered(esc);
+                        held.store(on, std::sync::atomic::Ordering::Relaxed);
+                        if on {
+                            let _ = shortcuts.unregister(esc);
+                        }
+                    } else if held.swap(false, std::sync::atomic::Ordering::Relaxed) && listen::working(&handle) {
+                        let _ = shortcuts.register(esc);
+                    }
+                });
+            }
             app.manage(listen::start(app.handle(), &ears_settings));
             let models = listen::models_dir(app.handle());
             app.manage(speak::start(app.handle(), &ears_settings, models));

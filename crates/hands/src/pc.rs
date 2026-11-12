@@ -259,6 +259,18 @@ fn looks_like_url(s: &str) -> bool {
     s.starts_with("http://") || s.starts_with("https://") || (!s.contains(' ') && s.contains('.') && s.rsplit('.').next().is_some_and(|tld| (2..=6).contains(&tld.len()) && tld.chars().all(|c| c.is_ascii_alphabetic())))
 }
 
+/// Links that open an app where it should go: Steam's install dialog for a game (`steam://install/2050650`), a
+/// launcher's library page, a Spotify album. Only apps' own links: `file:`, `search-ms:` and the like can run things.
+const APP_LINKS: &[&str] = &[
+    "steam:", "com.epicgames.launcher:", "uplay:", "goggalaxy:", "battlenet:", "origin2:", "spotify:", "discord:", "ms-settings:",
+    "ms-windows-store:", "mailto:", "msteams:", "slack:", "zoommtg:", "tg:", "whatsapp:", "obsidian:", "notion:", "roblox:", "roblox-player:",
+];
+
+fn app_link(s: &str) -> Option<&'static str> {
+    let l = s.trim().to_lowercase();
+    APP_LINKS.iter().copied().find(|p| l.starts_with(p))
+}
+
 /// Opens a file, folder, app id or link the way double-clicking it would. Links go to Windows' own "open" (to your
 /// default browser): handed to explorer.exe, a link with `?` in it can open a folder instead.
 pub(crate) fn shell_open(target: &str) -> std::io::Result<()> {
@@ -283,8 +295,10 @@ impl Tool for Open {
             description: "Open an app or game by name (anything in the Start menu, Store apps included, and every Steam game, \
                           also by what people call it: \"Warzone\" is Call of Duty), a folder (downloads, \
                           documents, desktop, pictures, music, videos, screenshots, recycle bin, this PC, file explorer), \
-                          Windows settings, or a website (a URL or domain). If the app already has a window, it's brought to \
-                          the front. If the name is ambiguous, the candidates come back: call again with the exact one."
+                          Windows settings, a website (a URL or domain), or an app's own link (steam://install/<appid> opens \
+                          Steam's install dialog for a game they own, steam://store/<appid> its store page). If the app \
+                          already has a window, it's brought to the front. If the name is ambiguous, the candidates come \
+                          back: call again with the exact one."
                 .into(),
             parameters: json!({
                 "type": "object",
@@ -313,6 +327,26 @@ fn open_blocking(name: &str, ctx: &Ctx) -> Outcome {
             Ok(()) => Outcome::ok(format!("opened {label}")),
             Err(e) => Outcome::failed(format!("couldn't open {label}: {e}")),
         };
+    }
+    // An app's own link: Sonnet asked for steam://install/2050650 (Steam's install dialog for Resident Evil 4), the
+    // right move, and was told the game wasn't installed.
+    if app_link(name).is_some() {
+        let link = name.trim();
+        if ctx.dry_run {
+            return Outcome::ok(format!("(dry run) would open {link}"));
+        }
+        return match shell_open(link) {
+            Ok(()) => Outcome::unsure(format!("opened {link}: its app takes it from here (look at its window to see what came up, a dialog may want a click)")),
+            Err(e) => Outcome::failed(format!("couldn't open {link}: {e}")),
+        };
+    }
+    if name.contains(':')
+        && !name.contains(' ')
+        && !looks_like_url(name)
+        && name.split(':').next().is_some_and(|s| s.len() > 1 && s.chars().all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c)))
+        && !name.split(':').nth(1).is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit()))
+    {
+        return Outcome::failed(format!("\"{name}\" is a link she doesn't open (only websites and apps' own links like steam://)"));
     }
     if looks_like_url(name) {
         let url = if name.starts_with("http") { name.to_string() } else { format!("https://{}", name.trim()) };
@@ -362,7 +396,9 @@ fn open_blocking(name: &str, ctx: &Ctx) -> Outcome {
     if ranked.is_empty() {
         // Her libraries are read already: "on Steam" and not in Steam's library means it isn't installed (she spent
         // 160 s clicking through Steam's window for a Warzone that wasn't there).
-        return Outcome::failed(format!("\"{name}\" isn't installed through the Start menu, Steam, Epic, GOG, Ubisoft or a desktop shortcut (their libraries are read already: don't look for it in their windows). If they said which store, it isn't installed there: say so and offer its store page. Only a launcher she can't read (Battle.net, EA app, Riot, Rockstar) is worth opening to look in"));
+        // Installed, that is: a game they own but haven't downloaded is in the store's library all the same (Sonnet read
+        // "isn't installed" as "you don't own it" and stopped).
+        return Outcome::failed(format!("\"{name}\" isn't installed through the Start menu, Steam, Epic, GOG, Ubisoft or a desktop shortcut, so it can't be started (their installed games are read already). To download or install it, it may still be theirs: in Steam open steam://install/<its appid> (the appid is in its store page link), or find it in the store's library and press Install. Only a launcher she can't read (Battle.net, EA app, Riot, Rockstar) is worth opening to look in"));
     }
     if !sure(&ranked) {
         let names: Vec<&str> = ranked.iter().take(6).map(|(_, a)| a.name.as_str()).collect();
@@ -919,6 +955,17 @@ fn focus_target(target: Option<&str>, ctx: &Ctx) -> Result<String, Outcome> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn apps_own_links_open_others_dont() {
+        assert_eq!(app_link("steam://install/2050650"), Some("steam:"));
+        assert_eq!(app_link("ms-settings:display"), Some("ms-settings:"));
+        assert_eq!(app_link("file:///C:/Windows/System32/calc.exe"), None);
+        assert_eq!(app_link("search-ms:query=x"), None);
+        let ctx = Ctx { dry_run: true, ..Ctx::default() };
+        assert_eq!(open_blocking("steam://install/2050650", &ctx).status, crate::Status::Ok);
+        assert_eq!(open_blocking("search-ms:query=x", &ctx).status, crate::Status::Failed);
+    }
 
     fn win(title: &str, app: &str, exe: &str, fg: bool) -> WinInfo {
         WinInfo { id: 1, title: title.into(), app: app.into(), exe: exe.into(), pid: 9, rect: [0; 4], minimized: false, maximized: false, foreground: fg }

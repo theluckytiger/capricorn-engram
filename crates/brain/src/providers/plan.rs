@@ -46,6 +46,190 @@ struct CursorChat {
     at: Instant,
 }
 
+/// Cursor's agent as a server (its ACP mode), started once and kept: each step is one prompt to it. Started fresh for
+/// every step it spent 5 to 10 s getting going before it read a word (steps took 10 to 45 s; this way 3 to 4), and a
+/// picture had to be saved for it to open with a tool of its own (a minute, and the job timed out). Here pictures go
+/// in with the words.
+struct Acp {
+    _child: tokio::process::Child,
+    stdin: tokio::process::ChildStdin,
+    lines: tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+    next: u64,
+    /// Its models as it names them ("composer-2.5[fast=true]").
+    models: Vec<String>,
+    /// A session made ahead: its first one takes 11 to 17 s, later ones 1.5 s.
+    spare: Option<String>,
+}
+
+fn acp() -> &'static tokio::sync::Mutex<Option<Acp>> {
+    static ACP: std::sync::OnceLock<tokio::sync::Mutex<Option<Acp>>> = std::sync::OnceLock::new();
+    ACP.get_or_init(|| tokio::sync::Mutex::new(None))
+}
+
+/// Set when this Cursor has no server mode (an old version): its one-run-a-step way is used instead.
+static NO_ACP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+const NO_SERVER: &str = "no server mode";
+
+/// Node and the script behind `cursor-agent.cmd`, run straight: the .cmd goes through cmd and PowerShell first, and
+/// stopping cmd left node running.
+fn cursor_node(exe: &Path) -> Option<(PathBuf, PathBuf)> {
+    let versions = exe.parent()?.join("versions");
+    let key = |n: &str| -> Option<(u32, u32, u32)> {
+        let mut p = n.split('-').next()?.split('.').map(|x| x.parse::<u32>().ok());
+        Some((p.next()??, p.next()??, p.next()??))
+    };
+    let newest = std::fs::read_dir(&versions)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| key(&e.file_name().to_string_lossy()).map(|k| (k, e.path())))
+        .max_by_key(|(k, _)| *k)?
+        .1;
+    let (node, script) = (newest.join("node.exe"), newest.join("index.js"));
+    (node.is_file() && script.is_file()).then_some((node, script))
+}
+
+/// Her name for a Cursor model as its server names it: "composer-2.5-fast" is "composer-2.5[fast=true]", "auto" is
+/// "default[]".
+fn acp_model(model: &str, listed: &[String]) -> Option<String> {
+    if model == "auto" {
+        return listed.iter().find(|m| m.starts_with("default")).cloned();
+    }
+    if listed.iter().any(|m| m == model) {
+        return Some(model.to_string());
+    }
+    let fast = model.ends_with("-fast");
+    let base = model.trim_end_matches("-fast");
+    let same: Vec<&String> = listed.iter().filter(|m| m.split('[').next() == Some(base)).collect();
+    same.iter().find(|m| m.contains("fast=true") == fast).or(same.first()).map(|m| m.to_string())
+}
+
+impl Acp {
+    async fn start(exe: &Path, dir: &Path) -> Result<Acp> {
+        let mut cmd = match cursor_node(exe) {
+            Some((node, script)) => {
+                let mut c = command(&node, &[script.to_string_lossy().into_owned(), "acp".into()], dir);
+                if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+                    c.env("NODE_COMPILE_CACHE", PathBuf::from(local).join("cursor-compile-cache"));
+                }
+                c.env("CURSOR_INVOKED_AS", "cursor-agent.cmd");
+                c
+            }
+            None => command(exe, &["acp".to_string()], dir),
+        };
+        if let Some(home) = cursor_home() {
+            cmd.env("USERPROFILE", &home).env("HOME", &home);
+        }
+        cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+        let mut child = cmd.spawn().with_context(|| format!("couldn't start {}", exe.display()))?;
+        // It stays running when she quits (its input closing isn't enough): it goes with her.
+        #[cfg(windows)]
+        if let Some(pid) = child.id() {
+            let _ = capri_hands::platform::end_with_me(pid);
+        }
+        let stdin = child.stdin.take().ok_or_else(|| anyhow!("no stdin"))?;
+        let stdout = child.stdout.take().ok_or_else(|| anyhow!("no stdout"))?;
+        let mut acp = Acp { _child: child, stdin, lines: BufReader::new(stdout).lines(), next: 0, models: Vec::new(), spare: None };
+        let hello = json!({ "protocolVersion": 1, "clientCapabilities": { "fs": { "readTextFile": false, "writeTextFile": false }, "terminal": false } });
+        acp.call("initialize", hello, Duration::from_secs(30)).await.map_err(|e| anyhow!("{NO_SERVER}: {e:#}"))?;
+        Ok(acp)
+    }
+
+    /// One request, and what it said (its message chunks) while answering. Its own requests (permission for a tool of
+    /// its own, reading a file) are turned down: it only thinks.
+    async fn call(&mut self, method: &str, params: Value, wait: Duration) -> Result<(Value, String)> {
+        self.next += 1;
+        let id = self.next;
+        let line = format!("{}\n", json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }));
+        let mut said = String::new();
+        let (stdin, lines) = (&mut self.stdin, &mut self.lines);
+        let answer = tokio::time::timeout(wait, async {
+            stdin.write_all(line.as_bytes()).await?;
+            stdin.flush().await?;
+            while let Some(l) = lines.next_line().await? {
+                let Ok(m) = serde_json::from_str::<Value>(&l) else { continue };
+                if m["id"].as_u64() == Some(id) && m.get("method").is_none() {
+                    if let Some(e) = m.get("error") {
+                        bail!("{}", e["data"]["message"].as_str().or(e["message"].as_str()).unwrap_or("an error"));
+                    }
+                    return Ok(m["result"].clone());
+                }
+                if m["method"] == "session/update" {
+                    let u = &m["params"]["update"];
+                    if u["sessionUpdate"] == "agent_message_chunk" {
+                        said.push_str(u["content"]["text"].as_str().unwrap_or(""));
+                    }
+                } else if let (Some(asked), Some(rid)) = (m["method"].as_str(), m.get("id")) {
+                    let reply = if asked == "session/request_permission" {
+                        json!({ "jsonrpc": "2.0", "id": rid, "result": { "outcome": { "outcome": "cancelled" } } })
+                    } else {
+                        json!({ "jsonrpc": "2.0", "id": rid, "error": { "code": -32601, "message": "not available here" } })
+                    };
+                    stdin.write_all(format!("{reply}\n").as_bytes()).await?;
+                    stdin.flush().await?;
+                }
+            }
+            bail!("{} stopped", app(Kind::Cursor))
+        })
+        .await;
+        let result = answer.map_err(|_| anyhow!("no answer in {} s", wait.as_secs()))??;
+        Ok((result, said))
+    }
+
+    async fn new_session(&mut self, dir: &Path) -> Result<String> {
+        let (r, _) = self.call("session/new", json!({ "cwd": dir, "mcpServers": [] }), Duration::from_secs(60)).await?;
+        if self.models.is_empty() {
+            self.models = r["models"]["availableModels"].as_array().into_iter().flatten().filter_map(|m| m["modelId"].as_str().map(String::from)).collect();
+        }
+        r["sessionId"].as_str().map(String::from).ok_or_else(|| anyhow!("{} made no session", app(Kind::Cursor)))
+    }
+
+    /// A session for one job (or one line of hers): read-only, on the model she was given.
+    async fn session(&mut self, dir: &Path, model: &str) -> Result<String> {
+        let sid = match self.spare.take() {
+            Some(s) => s,
+            None => self.new_session(dir).await?,
+        };
+        let _ = self.call("session/set_mode", json!({ "sessionId": sid, "modeId": "ask" }), Duration::from_secs(15)).await;
+        if let Some(m) = acp_model(model, &self.models) {
+            self.call("session/set_model", json!({ "sessionId": sid, "modelId": m }), Duration::from_secs(15)).await?;
+        }
+        Ok(sid)
+    }
+
+    async fn cancel(&mut self, sid: &str) {
+        let note = format!("{}\n", json!({ "jsonrpc": "2.0", "method": "session/cancel", "params": { "sessionId": sid } }));
+        let _ = self.stdin.write_all(note.as_bytes()).await;
+        let _ = self.stdin.flush().await;
+    }
+}
+
+/// Cursor's server started ahead, with a session ready, so her first job on it doesn't wait for either.
+pub fn warm_cursor(exe: PathBuf) {
+    let Ok(rt) = tokio::runtime::Handle::try_current() else { return };
+    rt.spawn(async move {
+        let Ok(dir) = folder() else { return };
+        let mut slot = acp().lock().await;
+        if slot.is_none() {
+            match Acp::start(&exe, &dir).await {
+                Ok(a) => *slot = Some(a),
+                Err(e) => {
+                    if e.to_string().starts_with(NO_SERVER) {
+                        NO_ACP.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    return;
+                }
+            }
+        }
+        if let Some(server) = slot.as_mut()
+            && server.spare.is_none()
+            && let Ok(sid) = server.new_session(&dir).await
+        {
+            server.spare = Some(sid);
+        }
+    });
+}
+
 /// One Claude Code run, open for the turns of one job.
 struct Session {
     _child: tokio::process::Child,
@@ -79,6 +263,9 @@ impl PlanBrain {
     /// `claudecode/sonnet`, `cursor/auto`: the app must be installed (signed in is checked on the first turn).
     pub fn new(id: &str, kind: Kind, model: &str) -> Result<Self> {
         let exe = find(kind).ok_or_else(|| anyhow!("{} isn't installed on this PC", app(kind)))?;
+        if kind == Kind::Cursor {
+            warm_cursor(exe.clone());
+        }
         Ok(Self { id: id.into(), kind, model: model.into(), exe, session: tokio::sync::Mutex::new(None), cursor_chat: tokio::sync::Mutex::new(None) })
     }
 }
@@ -338,14 +525,15 @@ impl Model for PlanBrain {
         let prompt = transcript(req.msgs);
         let (text, usage) = match self.kind {
             Kind::Claude => self.claude(&dir, &system, req.msgs, req.effort).await?,
-            Kind::Cursor => {
-                let pictures = save_pictures(req.msgs, &dir);
-                let answer = self.cursor(&dir, &system, req.msgs, &pictures).await;
-                for name in &pictures {
-                    let _ = std::fs::remove_file(dir.join(name));
+            Kind::Cursor if !NO_ACP.load(std::sync::atomic::Ordering::Relaxed) => match self.cursor_server(&dir, &system, req.msgs).await {
+                Err(e) if e.to_string().starts_with(NO_SERVER) => {
+                    NO_ACP.store(true, std::sync::atomic::Ordering::Relaxed);
+                    capri_core::journal::write("brain", json!({ "model": self.id, "cursor": "no server mode; one run a step" }));
+                    self.cursor_runs(&dir, &system, req.msgs).await?
                 }
-                answer?
-            }
+                other => other?,
+            },
+            Kind::Cursor => self.cursor_runs(&dir, &system, req.msgs).await?,
             Kind::Codex => (self.codex(&dir, &system, &prompt).await?, Usage::default()),
         };
         let (words, calls) = parse(&text);
@@ -443,6 +631,10 @@ impl PlanBrain {
         let mut cmd = command(&self.exe, &args, dir);
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
         let mut child = cmd.spawn().with_context(|| format!("couldn't start {}", self.exe.display()))?;
+        #[cfg(windows)]
+        if let Some(pid) = child.id() {
+            let _ = capri_hands::platform::end_with_me(pid);
+        }
         let stdin = child.stdin.take().ok_or_else(|| anyhow!("no stdin"))?;
         let stdout = child.stdout.take().ok_or_else(|| anyhow!("no stdout"))?;
         Ok(Session { _child: child, stdin, lines: BufReader::new(stdout).lines(), system: 0, seen: Vec::new(), at: Instant::now() })
@@ -452,6 +644,68 @@ impl PlanBrain {
                 s.system = h.finish();
                 s
             })
+    }
+
+    /// Cursor's server: a job's steps go on in one session, each a prompt with only what's new, pictures in it.
+    async fn cursor_server(&self, dir: &Path, system: &str, msgs: &[Msg]) -> Result<(String, Usage)> {
+        let key = {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            system.hash(&mut h);
+            h.finish()
+        };
+        let prints: Vec<u64> = msgs.iter().map(fingerprint).collect();
+        let job = system.contains("# Your tools");
+        let mut slot = acp().lock().await;
+        if slot.is_none() {
+            *slot = Some(Acp::start(&self.exe, dir).await?);
+        }
+        let server = slot.as_mut().expect("started");
+        let mut chat = self.cursor_chat.lock().await;
+        let going_on = chat.as_ref().filter(|c| job && c.system == key && c.at.elapsed() < Duration::from_secs(600) && prints.len() > c.seen.len() && prints.starts_with(&c.seen)).map(|c| (c.id.clone(), c.seen.len()));
+        let started = Instant::now();
+        let (sid, text) = match going_on {
+            Some((id, seen)) => {
+                let new: Vec<Msg> = msgs[seen..].iter().filter(|m| m.role != Role::Assistant).cloned().collect();
+                (id, agent_step(&transcript(&new), &[]))
+            }
+            None => match server.session(dir, &self.model).await {
+                Ok(sid) => (sid, agent_prompt(system, &transcript(msgs), &[])),
+                Err(e) => {
+                    *slot = None;
+                    return Err(e);
+                }
+            },
+        };
+        let mut prompt = vec![json!({ "type": "text", "text": text })];
+        for i in msgs.iter().rev().take_while(|m| m.role != Role::Assistant).flat_map(|m| &m.images) {
+            prompt.push(json!({ "type": "image", "mimeType": i.mime, "data": i.base64 }));
+        }
+        match server.call("session/prompt", json!({ "sessionId": sid, "prompt": prompt }), TURN).await {
+            Ok((_, said)) => {
+                *chat = job.then(|| CursorChat { id: sid, system: key, seen: prints, at: Instant::now() });
+                tracing::debug!("cursor server step: {} ms", started.elapsed().as_millis());
+                Ok((said, Usage::default()))
+            }
+            Err(e) => {
+                *chat = None;
+                if e.to_string().contains("stopped") || e.to_string().to_lowercase().contains("pipe") {
+                    *slot = None;
+                } else {
+                    server.cancel(&sid).await;
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// Cursor's way without its server: one run of the app a step, pictures saved for it to open.
+    async fn cursor_runs(&self, dir: &Path, system: &str, msgs: &[Msg]) -> Result<(String, Usage)> {
+        let pictures = save_pictures(msgs, dir);
+        let answer = self.cursor(dir, system, msgs, &pictures).await;
+        for name in &pictures {
+            let _ = std::fs::remove_file(dir.join(name));
+        }
+        answer
     }
 
     async fn cursor(&self, dir: &Path, system: &str, msgs: &[Msg], pictures: &[String]) -> Result<(String, Usage)> {
@@ -682,6 +936,51 @@ pub async fn check(kind: Kind, model: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cursor_models_by_their_server_names() {
+        let listed: Vec<String> = ["default[]", "composer-2.5[fast=true]", "claude-sonnet-5-5[context=300k,reasoning_effort=high]"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(acp_model("auto", &listed).as_deref(), Some("default[]"));
+        assert_eq!(acp_model("composer-2.5-fast", &listed).as_deref(), Some("composer-2.5[fast=true]"));
+        assert_eq!(acp_model("composer-2.5", &listed).as_deref(), Some("composer-2.5[fast=true]"));
+        assert_eq!(acp_model("claude-sonnet-5-5", &listed).as_deref(), Some("claude-sonnet-5-5[context=300k,reasoning_effort=high]"));
+        assert_eq!(acp_model("gpt-9", &listed), None);
+    }
+
+    /// The real thing: a job of several steps on Cursor's server, a picture in one of them, each step timed.
+    /// `cargo test -p capri-brain cursor_server_steps -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore = "calls Cursor"]
+    async fn cursor_server_steps_are_quick() {
+        use base64::Engine;
+        let model = std::env::var("CAPRI_CURSOR_MODEL").unwrap_or_else(|_| "composer-2.5".into());
+        let brain = PlanBrain::new(&format!("cursor/{model}"), Kind::Cursor, &model).unwrap();
+        let tools = vec![
+            capri_hands::ToolSpec { name: "open".into(), description: "Open an app by name".into(), parameters: json!({ "type": "object", "properties": { "name": { "type": "string" } }, "required": ["name"] }) },
+            capri_hands::ToolSpec { name: "look".into(), description: "A picture of a window".into(), parameters: json!({ "type": "object", "properties": { "window": { "type": "string" } } }) },
+        ];
+        let system = "You work the user's PC with your tools. Do the job step by step; answer in one short line when it's done.";
+        let mut msgs = vec![Msg::user("Request: open Steam, then look at its window and tell me the main colour you see.")];
+        let art = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../app/icons/128x128.png");
+        let picture = base64::engine::general_purpose::STANDARD.encode(std::fs::read(art).unwrap());
+        for step in 0..5 {
+            let started = Instant::now();
+            let r = brain.chat(Req { system, msgs: &msgs, tools: &tools, max_tokens: 400, effort: Effort::Low }).await.unwrap();
+            println!("step {step}: {:.1} s, calls {:?}, said {:?}", started.elapsed().as_secs_f32(), r.calls.iter().map(|c| c.name.clone()).collect::<Vec<_>>(), r.text.chars().take(80).collect::<String>());
+            msgs.push(Msg::assistant(&r));
+            if r.calls.is_empty() {
+                return;
+            }
+            for c in &r.calls {
+                let mut m = Msg::tool(c, if c.name == "look" { "here's Steam as a picture" } else { "ok: started Steam; its window is up" }, false);
+                if c.name == "look" {
+                    m.images.push(crate::llm::Image { mime: "image/png".into(), base64: picture.clone() });
+                }
+                msgs.push(m);
+            }
+        }
+        panic!("no answer in 5 steps");
+    }
 
     /// The real thing: Cursor's agent, signed in on this PC, opening a picture she hands it. `cargo test -p capri-brain cursor_opens -- --ignored`
     #[tokio::test]

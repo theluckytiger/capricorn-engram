@@ -16,6 +16,10 @@ use crate::fastpath::{self, Speak};
 use crate::llm::{Effort, Model, Msg, Req};
 use crate::{lines, persona};
 
+/// Turns a smart brain may take on one job: enough that it ends by finishing, by your stop, or by her 25 minutes, not
+/// by counting.
+const SMART_TURNS: usize = 200;
+
 pub struct Brain {
     pub hands: Hands,
     pub ctx: Ctx,
@@ -245,6 +249,13 @@ impl Brain {
             }
         }
 
+        // "Try again", "keep going": the last job again, whole, on the brain that does jobs. "Try again." on its own went
+        // to the small local brain, which clicked Steam's Manage Downloads, and the job's own words were lost.
+        let again = self.again(text);
+        if let Some(job) = &again {
+            events.note("the last job again", json!({ "job": job }));
+        }
+        let text: &str = again.as_deref().unwrap_or(text);
         // Her notes on how things worked before in the apps this is about.
         let notes = if self.ctx.dry_run { Vec::new() } else { capri_core::notes::relevant(text, None, 5) };
         let notes = if notes.is_empty() { String::new() } else { format!("\n(Your notes on what worked before, use them if they fit:\n{})", notes.iter().map(|n| format!("- {}: {}", n.app, n.how)).collect::<Vec<_>>().join("\n")) };
@@ -271,7 +282,18 @@ impl Brain {
             events.note("an agent job: the stronger brain plans it", json!({ "model": p.id(), "hard": hard_job(text) }));
         }
         let first = planner.clone().unwrap_or(first);
-        let limits = if planner.is_some() { Limits { steps: 14, effort: Effort::Medium } } else { Limits { steps: 8, effort: Effort::Low } };
+        // A job inside an app is many small turns (look, click, look): 14 ran out one click from Steam's Install button.
+        // A stuck brain still stops early (the same step failing twice, four failures).
+        // With nothing stronger to hand a job to, the brain doing it keeps at it the same way (eight turns and "I
+        // couldn't" was the end of it on her local brain alone).
+        let nothing_stronger = !(self.cloud && self.smart.as_ref().is_some_and(|s| s.id() != first.id()));
+        let limits = if planner.is_some() {
+            Limits { steps: SMART_TURNS, effort: Effort::Medium, persist: true }
+        } else if nothing_stronger && asks_to_do(text) {
+            Limits { steps: SMART_TURNS, effort: Effort::Low, persist: true }
+        } else {
+            Limits { steps: 8, effort: Effort::Low, persist: false }
+        };
         let mut run = agent::run(first.as_ref(), &self.hands, &self.ctx, text, &situation, &limits, gate, events).await;
         let mut model = first.clone();
         // The online brain not answering (overloaded, a time-out) before it did anything: the one on this PC does it
@@ -279,7 +301,7 @@ impl Brain {
         if planner.is_some() && run.trouble.is_some() && run.steps.is_empty() && !(gaming && self.fast.local()) {
             events.note("the stronger brain didn't answer: the local one takes it", json!({ "trouble": run.trouble }));
             model = self.fast.clone();
-            run = agent::run(model.as_ref(), &self.hands, &self.ctx, text, &situation, &Limits { steps: 8, effort: Effort::Low }, gate, events).await;
+            run = agent::run(model.as_ref(), &self.hands, &self.ctx, text, &situation, &Limits { steps: 8, effort: Effort::Low, persist: false }, gate, events).await;
         }
 
         // Asked to do something, and nothing was done: once more, told to act (it answered "only one video's showing"
@@ -303,7 +325,7 @@ impl Brain {
             events.note("escalating", json!({ "to": smart.id(), "trouble": run.trouble }));
             let tried = summarize_steps(&run.steps);
             let situation = format!("{situation}\n(A smaller model tried first and got stuck. What it did: {tried})");
-            let limits = Limits { steps: 12, effort: Effort::Medium };
+            let limits = Limits { steps: SMART_TURNS, effort: Effort::Medium, persist: true };
             let second = agent::run(smart.as_ref(), &self.hands, &self.ctx, text, &situation, &limits, gate, events).await;
             let mut steps = run.steps;
             steps.extend(second.steps.clone());
@@ -478,6 +500,18 @@ impl Brain {
         }
     }
 
+    /// "Try again" (or "keep going", "do it again") after a job in the last ten minutes: that job's request, with what
+    /// was said now.
+    fn again(&self, text: &str) -> Option<String> {
+        if !retry(text) {
+            return None;
+        }
+        let r = self.recent.lock().unwrap();
+        let last = r.iter().rev().find(|t| t.at.elapsed().as_secs() < 600 && (t.did != "nothing" || asks_to_do(&t.asked)))?;
+        // A job that was itself a "try again" carries its own request already.
+        Some(if last.asked.ends_with(')') && last.asked.contains(" (") { last.asked.clone() } else { format!("{} ({})", last.asked.trim(), text.trim()) })
+    }
+
     fn recent_text(&self) -> String {
         let mut r = self.recent.lock().unwrap();
         r.retain(|t| t.at.elapsed().as_secs() < 600);
@@ -487,6 +521,17 @@ impl Brain {
         let lines: Vec<String> = r.iter().map(|t| format!("- user: \"{}\" → she did: {} → she said: \"{}\"", t.asked, t.did, t.said)).collect();
         format!("\nJust before (oldest first):\n{}", lines.join("\n"))
     }
+}
+
+/// "Try again", "again", "keep going", "do it again", "one more time": the last job once more.
+pub fn retry(text: &str) -> bool {
+    let t: String = text.to_lowercase().chars().map(|c| if c.is_alphanumeric() || c == ' ' || c == '\'' { c } else { ' ' }).collect();
+    let words: Vec<&str> = t.split_whitespace().filter(|w| !matches!(*w, "capri" | "capricorn" | "please" | "pls" | "can" | "could" | "you" | "just" | "now" | "ok" | "okay" | "come" | "then")).collect();
+    let said = words.join(" ");
+    words.len() <= 6
+        && ["try again", "try it again", "again", "retry", "do it again", "keep going", "keep trying", "go on", "carry on", "continue", "one more time", "try once more", "finish it", "finish the job", "don't give up", "dont give up"]
+            .iter()
+            .any(|p| said == *p || (p.contains(' ') && (said.starts_with(&format!("{p} ")) || said.ends_with(&format!(" {p}")))))
 }
 
 /// Whether `line` mostly says `before` again: most of the shorter one's words are in the other.
@@ -851,6 +896,17 @@ fn facts(run: &Run) -> String {
 #[cfg(test)]
 mod tests {
     use super::small_talk;
+
+    #[test]
+    fn try_again_is_the_last_job_again() {
+        use super::retry;
+        for s in ["Try again.", "Capri, try again", "come on, try again!", "keep going", "Again.", "do it again please", "don't give up"] {
+            assert!(retry(s), "{s}");
+        }
+        for s in ["Try the other one", "open steam again and play music from my playlist now", "again what?"] {
+            assert!(!retry(s), "{s}");
+        }
+    }
 
     #[test]
     fn her_lines_have_no_markdown() {

@@ -215,7 +215,7 @@ pub fn start_job(app: &AppHandle, text: &str, spoken: bool) -> std::sync::Arc<At
 fn tell_job(app: &AppHandle, text: &str) -> Option<std::sync::Arc<AtomicBool>> {
     let l = app.state::<Listening>();
     let done = l.busy.lock().unwrap().as_ref().filter(|b| !b.done.load(Ordering::Relaxed)).map(|b| b.done.clone())?;
-    if is_hush(text) || matches!(text.trim().to_lowercase().trim_end_matches(['.', '!']), "cancel" | "never mind" | "nevermind" | "forget it") {
+    if is_hush(text) || matches!(text.trim().to_lowercase().trim_end_matches(['.', '!']), "cancel" | "never mind" | "nevermind" | "forget it") || ends_in_stop(text) {
         capri_core::journal::write("told mid-job", serde_json::json!({ "text": text, "stopped": true }));
         stop_job(app);
         return Some(done);
@@ -282,6 +282,15 @@ fn drop_busy(b: Busy, why: &str) -> bool {
 }
 
 /// "Stop", "shut up", "never mind"… said right after cutting her off: be quiet, do nothing.
+/// Said to a job, ending in "stop" ("No, no, Capri. Can you find… stop."): the job stops. It went into the job as more
+/// to do, and she searched the web for "Capri". Not "don't stop".
+fn ends_in_stop(text: &str) -> bool {
+    let s: String = text.to_lowercase().chars().map(|c| if c.is_alphanumeric() || c == '\'' { c } else { ' ' }).collect();
+    let words: Vec<&str> = s.split_whitespace().collect();
+    let n = words.len();
+    n >= 2 && matches!(words[n - 1], "stop" | "cancel") && !matches!(words[n - 2], "don't" | "dont" | "not" | "never" | "to")
+}
+
 fn is_hush(text: &str) -> bool {
     let s: String = text.to_lowercase().chars().filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '\'').collect();
     let s = s.split_whitespace().filter(|w| !matches!(*w, "okay" | "ok" | "just" | "please" | "now" | "alright")).collect::<Vec<_>>().join(" ");
@@ -469,6 +478,16 @@ fn muted(app: &AppHandle) -> bool {
 #[cfg(test)]
 mod tests {
     use super::is_hush;
+
+    #[test]
+    fn a_job_ending_in_stop_stops() {
+        use super::ends_in_stop;
+        assert!(ends_in_stop("No, no, Capri, Capri. Can you find Capri, stop."));
+        assert!(ends_in_stop("okay cancel"));
+        assert!(!ends_in_stop("don't stop"));
+        assert!(!ends_in_stop("stop"));
+        assert!(!ends_in_stop("find the bus stop near me"));
+    }
 
     #[test]
     fn hush_words() {

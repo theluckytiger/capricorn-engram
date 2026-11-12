@@ -139,6 +139,15 @@ impl Gate for UiGate {
         // Said out loud too, and her ears stay open for "yes" or "no" until it's answered: a "Yes." said to it was
         // taken as not for her (her name wasn't in it).
         let question = what.split(" (").next().unwrap_or(what).trim().to_string();
+        // Said as a question: "Press “Install” in Steam." sounded like she was telling you to, and the "No." it got
+        // meant "you do it".
+        let question = match question.strip_suffix('.') {
+            Some(q) if !question.ends_with('?') => {
+                let mut c = q.chars();
+                c.next().map(|f| format!("Should I {}{}?", f.to_lowercase(), c.as_str())).unwrap_or(question.clone())
+            }
+            _ => question,
+        };
         crate::speak::say(&self.app, &question, false);
         crate::listen::listen_for_answer(&self.app);
         crate::listen::waiting_for_answer(&self.app, true);

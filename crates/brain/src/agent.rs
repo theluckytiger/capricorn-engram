@@ -177,7 +177,35 @@ impl Run {
 pub struct Limits {
     pub steps: usize,
     pub effort: Effort,
+    /// A smart brain on a job keeps at it until it's done: a dead end or "I couldn't" sends it back to try another way,
+    /// and a brain that didn't answer is asked again. Only a stop from you, or nothing new left to try, ends it.
+    pub persist: bool,
 }
+
+/// How long a persistent job may go on before she stops and says how far she got.
+const PERSIST_FOR: std::time::Duration = std::time::Duration::from_secs(25 * 60);
+/// Times a persistent brain is sent back after giving up, or after a dead end.
+const PUSHES: usize = 6;
+
+/// An answer that gives up on the job ("I couldn't get it to download", "it's not in your library").
+fn gave_up(text: &str) -> bool {
+    let t = text.to_lowercase().replace('’', "'");
+    [
+        "couldn't", "could not", "can't", "cannot", "wasn't able", "weren't able", "unable", "didn't work", "not able", "no luck", "i'm stuck", "got stuck",
+        "isn't in", "not in your", "didn't find", "couldn't find", "no way to", "failed", "didn't go through", "nothing happened", "gave up", "give up",
+    ]
+    .iter()
+    .any(|w| t.contains(w))
+        // "The first click failed, but it's downloading now" is done.
+        && ![
+            "it's downloading", "is downloading", "now downloading", "download started", "started downloading", "is installing", "installing now", "it's installing", "queued", "it's done", "all done", "is playing", "now playing",
+        ]
+        .iter()
+        .any(|w| t.contains(w))
+}
+
+/// What a persistent brain is told when it wants to stop short of the job, or keeps hitting the same wall.
+const KEEP_GOING: &str = "Don't stop: the job they asked for isn't done yet, and you have time and tools. Look at the window again (it may have changed), then try a different way than before: another control or its exact words, a keyboard shortcut, the app's own search, scrolling, an app link (steam://install/<appid> opens Steam's install dialog for a game), or the website. Only stop if it truly can't be done on this PC (it doesn't exist, or it needs their password or a payment) and say exactly why.";
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::needless_borrow)] // owned Call after clone; Msg::tool takes &Call
@@ -227,9 +255,16 @@ pub async fn run(model: &dyn Model, hands: &Hands, ctx: &Ctx, request: &str, sit
     let mut steps: Vec<Step> = Vec::new();
     let mut nudged = false;
     let mut failures = 0usize;
+    let mut pushes = 0usize;
+    let mut pushed_at: Option<usize> = None;
+    let mut unanswered = 0usize;
     let finish = |summary: String, steps: Vec<Step>, escalate: bool, trouble: Option<String>| Run { summary, steps, model: model.id().to_string(), escalate, trouble, ms: start.elapsed().as_millis() };
 
     for _ in 0..limits.steps {
+        if limits.persist && start.elapsed() > PERSIST_FOR {
+            events.note("stopped: out of time", json!({ "minutes": PERSIST_FOR.as_secs() / 60 }));
+            return finish(String::new(), steps, false, Some(format!("still not done after {} minutes", PERSIST_FOR.as_secs() / 60)));
+        }
         for said in events.heard() {
             events.note("told mid-job", json!({ "text": said }));
             msgs.push(told(&said));
@@ -237,7 +272,16 @@ pub async fn run(model: &dyn Model, hands: &Hands, ctx: &Ctx, request: &str, sit
         events.step(&StepEvent::Thinking { model: model.id().to_string() });
         let req = Req { system: SYSTEM, msgs: &msgs, tools: &tools, max_tokens: 1024, effort: limits.effort };
         let reply = match crate::llm::ask(model, req, "agent", events.request()).await {
-            Ok(r) => r,
+            Ok(r) => {
+                unanswered = 0;
+                r
+            }
+            // A brain that went quiet once mid-job (Cursor, a minute on one picture) is asked again, not given up on.
+            Err(e) if limits.persist && unanswered < 2 => {
+                unanswered += 1;
+                events.note("model didn't answer: asking again", json!({ "model": model.id(), "error": format!("{e:#}"), "try": unanswered }));
+                continue;
+            }
             Err(e) => {
                 events.note("model unreachable", json!({ "model": model.id(), "error": format!("{e:#}") }));
                 return finish(String::new(), steps, true, Some(format!("{e:#}")));
@@ -298,12 +342,25 @@ pub async fn run(model: &dyn Model, hands: &Hands, ctx: &Ctx, request: &str, sit
                 msgs.push(Msg::user("You've only looked so far. Do what they asked with your tools now (click a thing by its words, even out of sight; type_in a box by its name), or say plainly why it can't be done."));
                 continue;
             }
+            // A smart brain giving up short of the job: back to it, another way (Sonnet stopped one click from Steam's
+            // Install). Not when they said no to a step: that's theirs to decide.
+            let refused = steps.iter().any(|s| s.outcome.summary.starts_with("the user said no"));
+            // Twice "I can't" with nothing tried in between: it means it.
+            let tried_since = pushed_at != Some(steps.len());
+            if limits.persist && pushes < PUSHES && !refused && tried_since && gave_up(&reply.text) {
+                pushes += 1;
+                pushed_at = Some(steps.len());
+                events.note("sent back: it gave up", json!({ "reply": reply.text, "push": pushes }));
+                msgs.push(Msg::user(KEEP_GOING));
+                continue;
+            }
             let escalate = !steps.is_empty() && !steps.iter().any(|s| s.outcome.status == Status::Ok) && failures >= 2;
             if escalate {
                 events.note("worth a stronger model", json!({ "failures": failures }));
             }
             return finish(reply.text, steps, escalate, None);
         }
+        let mut dead_end: Option<String> = None;
         for call in &reply.calls {
             // A tool left out of the list, called by name: it's in the list from now on.
             if let Some(i) = left_out.iter().position(|t| t.name == call.name) {
@@ -561,8 +618,12 @@ pub async fn run(model: &dyn Model, hands: &Hands, ctx: &Ctx, request: &str, sit
                 continue;
             }
             let risk = tool.risk(&call.args);
-            if risk >= Risk::Risky {
-                let what = phrase(&call.name, &call.args);
+            let what = phrase(&call.name, &call.args);
+            // "Download Resident Evil 4": its Install button is the thing asked for. Asking again got a "no" that
+            // meant "you press it", and the job ended one click short.
+            if risk == Risk::Risky && matches!(call.name.as_str(), "click" | "click_at") && asked_for(request, &what) {
+                events.note("not asking: it's what they asked for", json!({ "what": what }));
+            } else if risk >= Risk::Risky {
                 let yes = gate.allow(&what, risk).await;
                 events.note("asked to confirm", json!({ "what": what, "call": format!("{} {}", call.name, compact(&call.args)), "risk": risk, "yes": yes }));
                 if !yes {
@@ -591,7 +652,31 @@ pub async fn run(model: &dyn Model, hands: &Hands, ctx: &Ctx, request: &str, sit
                 result.images.push(crate::llm::Image { mime: "image/png".into(), base64: b64 });
             }
             msgs.push(result);
+            // A long job is many looks: only the newest pictures go back each turn (all of them made every step slower
+            // than the one before). A plan brain keeps its own: it's sent only what's new already.
+            if !["claudecode/", "cursor/", "codex/"].iter().any(|p| model.id().starts_with(p)) {
+                let mut kept = 0;
+                for m in msgs.iter_mut().rev() {
+                    if !m.images.is_empty() {
+                        kept += 1;
+                        if kept > 2 {
+                            m.images.clear();
+                        }
+                    }
+                }
+            }
             steps.push(Step { tool: call.name.clone(), args: call.args.clone(), outcome, ms });
+            // A smart brain at a dead end is told to try another way instead of ending the job.
+            // (Said after this turn's tool results: every call gets its result first.)
+            if limits.persist && (repeated || failures >= 4) && pushes < PUSHES {
+                if dead_end.is_none() {
+                    pushes += 1;
+                    events.note("dead end: try another way", json!({ "tool": call.name, "args": call.args, "push": pushes }));
+                    dead_end = Some(call.name.clone());
+                }
+                failures = 0;
+                continue;
+            }
             if repeated {
                 events.note("stopped: the same step failed twice", json!({ "tool": call.name, "args": call.args }));
                 return finish(String::new(), steps, true, Some("the same step failed twice".into()));
@@ -601,6 +686,9 @@ pub async fn run(model: &dyn Model, hands: &Hands, ctx: &Ctx, request: &str, sit
                 events.note("stopped: four steps failed", json!({}));
                 return finish(String::new(), steps, true, Some("four steps failed".into()));
             }
+        }
+        if let Some(tool) = dead_end {
+            msgs.push(Msg::user(format!("That's a dead end ({tool} isn't getting anywhere). {KEEP_GOING}")));
         }
     }
     events.note("stopped: out of steps", json!({ "steps": limits.steps }));
@@ -614,6 +702,16 @@ fn render(o: &Outcome) -> String {
         Status::Unsure => "unsure",
     };
     format!("{status}: {}", o.summary)
+}
+
+/// A button that does what the request asked: "Install" or "Download" when they said to download or install. Anything
+/// that costs money still asks ("Buy and download" is a purchase).
+fn asked_for(request: &str, what: &str) -> bool {
+    let words = |t: &str| t.to_lowercase().split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(String::from).collect::<Vec<_>>();
+    let get = |w: &String| w.starts_with("download") || w.starts_with("install");
+    let step = words(what);
+    let money = step.iter().any(|w| ["buy", "purchase", "pay", "order", "checkout", "cart", "subscribe", "preorder", "price", "eur", "usd"].contains(&w.as_str())) || what.contains(['€', '$', '£']);
+    words(request).iter().any(get) && step.iter().any(get) && !money
 }
 
 /// A risky step in words, for asking first ("Press “Send” in Discord."): the tool's own call when it's one without
@@ -938,6 +1036,25 @@ fn which_window(name: &str, own_pid: u32) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_requested_install_needs_no_asking() {
+        use super::asked_for;
+        assert!(asked_for("Download resident evil four from Steam for me.", "Press “the INSTALL button” in Steam."));
+        assert!(asked_for("install discord", "Press “Download” in Brave."));
+        assert!(!asked_for("open Steam", "Press “Install” in Steam."));
+        assert!(!asked_for("download GTA 5", "Press “Buy and download” in Steam."));
+        assert!(!asked_for("download GTA 5", "Press “Install 29,99€” in Steam."));
+    }
+
+    #[test]
+    fn giving_up_is_seen() {
+        use super::gave_up;
+        assert!(gave_up("I couldn’t get Resident Evil 4 to download, Steam's search didn't trigger it."));
+        assert!(gave_up("The game's not in your library."));
+        assert!(!gave_up("Done: Resident Evil 4 is downloading."));
+        assert!(!gave_up("The first click failed, but it's downloading now."));
+    }
+
     #[tokio::test]
     async fn words_said_mid_job_reach_the_next_step() {
         use std::sync::Mutex;
@@ -994,7 +1111,7 @@ mod tests {
         }
         let mut hands = Hands::default();
         hands.add(Wait);
-        let done = run(&Echo, &hands, &Ctx::default(), "do it", "Now: a test", &Limits { steps: 4, effort: Effort::Low }, &DenyRisky, &Told(Mutex::new(Vec::new()))).await;
+        let done = run(&Echo, &hands, &Ctx::default(), "do it", "Now: a test", &Limits { steps: 4, effort: Effort::Low, persist: false }, &DenyRisky, &Told(Mutex::new(Vec::new()))).await;
         assert!(done.summary.contains("use the other one"), "{}", done.summary);
         assert_eq!(done.steps.len(), 1);
     }

@@ -63,6 +63,22 @@ pub fn bing_hits(html: &str) -> Vec<Hit> {
     out
 }
 
+/// The results on Brave Search's page: the fallback when DuckDuckGo turns a quick second search away with an empty
+/// page (Bing's page came back without results to read, and she said there were none).
+pub fn brave_hits(html: &str) -> Vec<Hit> {
+    let mut out = Vec::new();
+    for block in html.split("data-type=\"web\"").skip(1) {
+        let block = &block[..block.len().min(8000)];
+        let Some(url) = attr(block, "<a href=\"").map(|u| u.replace("&amp;", "&")) else { continue };
+        let title = block.split("search-snippet-title").nth(1).and_then(|t| attr(t, "title=\"")).map(text).unwrap_or_default();
+        let snippet = block.split("<div class=\"content").nth(1).and_then(|c| c.split_once('>')).map(|(_, r)| text(r.split("</div>").next().unwrap_or(""))).unwrap_or_default();
+        if url.starts_with("http") && !url.contains("brave.com") && !title.is_empty() && !out.iter().any(|h: &Hit| h.url == url) {
+            out.push(Hit { title, url, snippet });
+        }
+    }
+    out
+}
+
 fn attr<'a>(s: &'a str, start: &str) -> Option<&'a str> {
     let i = s.find(start)? + start.len();
     s[i..].split('"').next()
@@ -189,7 +205,13 @@ impl Tool for Web {
                 };
                 let mut found = hits(&html);
                 if found.is_empty() {
-                    // DuckDuckGo turns away a burst of automated searches with an empty page: ask Bing.
+                    // DuckDuckGo turns away a burst of automated searches with an empty page: ask Brave, then Bing.
+                    let page = client().get("https://search.brave.com/search").query(&[("q", query.as_str())]).header("Accept-Language", "en-US,en;q=0.9").send().await;
+                    if let Ok(r) = page {
+                        found = brave_hits(&r.text().await.unwrap_or_default());
+                    }
+                }
+                if found.is_empty() {
                     let page = client().get("https://www.bing.com/search").query(&[("q", query.as_str()), ("setlang", "en"), ("cc", "US"), ("mkt", "en-US")]).header("Accept-Language", "en-US,en;q=0.9").send().await;
                     if let Ok(r) = page {
                         found = bing_hits(&r.text().await.unwrap_or_default());
@@ -210,8 +232,13 @@ impl Tool for Web {
             }
             "read" => {
                 let Some(url) = opt_arg::<String>(&args, "url").filter(|u| u.starts_with("http")) else { return Outcome::failed("read needs a url (http…)") };
-                let html = match client().get(&url).send().await {
+                let html = match client().get(&url).header("Accept-Language", "en-US,en;q=0.9").header("Accept", "text/html,application/xhtml+xml,*/*;q=0.8").send().await {
                     Ok(r) if r.status().is_success() => r.text().await.unwrap_or_default(),
+                    // Shops behind a bot wall (gg.deals, loaded.com) turn her plain reader away: their page in the
+                    // browser shows it all the same.
+                    Ok(r) if matches!(r.status().as_u16(), 401 | 403 | 429 | 503) => {
+                        return Outcome::failed(format!("{url} answered {} (it turns away anything but a browser): open it in the browser with open, then read_window or look at it", r.status()));
+                    }
                     Ok(r) => return Outcome::failed(format!("{url} answered {}", r.status())),
                     Err(e) => return Outcome::failed(format!("couldn't open {url}: {e}")),
                 };
@@ -241,6 +268,16 @@ mod tests {
         assert_eq!(h[0].url, "https://videocardprices.com/card/nvidia-rtx-5080-super/");
         assert_eq!(h[0].title, "RTX 5080 Super Price Tracker & more");
         assert_eq!(h[0].snippet, "Track RTX 5080 Super prices");
+    }
+
+    #[test]
+    fn reads_brave() {
+        let html = r#"<div class="snippet svelte-jmfu5f" data-pos="0" data-type="web"><div class="result-content"><a href="https://www.loaded.com/gta-5-pc" target="_self" class="l1"><cite>loaded.com</cite><div class="title search-snippet-title line-clamp-1" title="Buy GTA V PC CD Key | Loaded">Buy GTA V PC CD Key | Loaded</div></a><div class="content desktop-default-regular">Instant delivery and the <strong>best</strong> prices</div></div></div><div data-type="web"><a href="https://search.brave.com/x"><div class="search-snippet-title" title="Brave">x</div></a></div>"#;
+        let h = super::brave_hits(html);
+        assert_eq!(h.len(), 1);
+        assert_eq!(h[0].url, "https://www.loaded.com/gta-5-pc");
+        assert_eq!(h[0].title, "Buy GTA V PC CD Key | Loaded");
+        assert_eq!(h[0].snippet, "Instant delivery and the best prices");
     }
 
     #[test]

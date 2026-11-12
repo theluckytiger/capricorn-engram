@@ -129,8 +129,15 @@ pub async fn online_brain(provider: &str, key: &str, model: Option<&str>) -> Res
         bail!("none of {}'s models she knows how to use are on your key", c.name);
     }
     let mut tried = Vec::new();
-    for m in picks.iter().take(if provider == "gemini" { 6 } else { 3 }) {
-        match answers(c.base, key, m, provider == "gemini").await {
+    // NVIDIA's big free models queue for a while before the first answer: ten seconds passed over Nemotron Super for the
+    // small Nano. Its strong ones get longer, and more of them are tried before the small ones.
+    let (how_many, wait) = match provider {
+        "gemini" => (6, 10),
+        "nvidia" => (5, 30),
+        _ => (3, 10),
+    };
+    for m in picks.iter().take(how_many) {
+        match answers(c.base, key, m, provider == "gemini", wait).await {
             Ok(()) => return Ok((format!("{provider}/{m}"), eyes_for(provider, &v, &ids, m).map(|e| format!("{provider}/{e}")))),
             Err(e) => tried.push(format!("{m}: {e}")),
         }
@@ -199,7 +206,7 @@ async fn anthropic_brain(key: &str) -> Result<(String, Option<String>)> {
 
 /// Whether `model` answers a small request with a tool within ten seconds (Gemini at low effort: it thinks at length
 /// otherwise).
-async fn answers(base: &str, key: &str, model: &str, low_effort: bool) -> Result<()> {
+async fn answers(base: &str, key: &str, model: &str, low_effort: bool, wait: u64) -> Result<()> {
     let mut body = serde_json::json!({
         "model": model,
         "messages": [{ "role": "user", "content": "Open Discord." }],
@@ -209,7 +216,7 @@ async fn answers(base: &str, key: &str, model: &str, low_effort: bool) -> Result
     if low_effort {
         body["reasoning_effort"] = "low".into();
     }
-    let r = http(Duration::from_secs(10)).post(format!("{base}/chat/completions")).bearer_auth(key).json(&body).send().await.map_err(|_| anyhow::anyhow!("no answer in 10 s"))?;
+    let r = http(Duration::from_secs(wait)).post(format!("{base}/chat/completions")).bearer_auth(key).json(&body).send().await.map_err(|_| anyhow::anyhow!("no answer in {wait} s"))?;
     if !r.status().is_success() {
         let status = r.status();
         let v: serde_json::Value = r.json().await.unwrap_or_default();
@@ -260,11 +267,25 @@ fn candidates(provider: &str, v: &serde_json::Value, ids: &[String]) -> Vec<Stri
             models.sort_by_key(|m| std::cmp::Reverse(m.1));
             ["anthropic/claude-sonnet", "google/gemini", "openai/gpt-", "deepseek/deepseek-chat"].iter().filter_map(|f| models.iter().find(|(id, _)| id.starts_with(f) && !id.contains("image") && !id.contains("audio")).map(|(id, _)| id.to_string())).collect()
         }
-        // NVIDIA: hundreds of models; the strong ones that call tools, Nemotron Super (it also sees) first.
+        // NVIDIA: hundreds of models, and they come and go; the strong ones that call tools, Nemotron Super (it also
+        // sees) first. Four of her old picks went from its list and setup fell to the small Nano Omni (3B at work), which
+        // scrolled Steam's store for two minutes.
         "nvidia" => {
-            let mut list = have(&["nvidia/nemotron-3.5-super-vl-120b-a12b", "openai/gpt-oss-120b", "moonshotai/kimi-k2-instruct-0905", "qwen/qwen3-235b-a22b", "meta/llama-3.3-70b-instruct", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "openai/gpt-oss-20b"]);
-            let more: Vec<String> = ids.iter().filter(|id| id.contains("nemotron") && id.contains("super") && !list.contains(id)).cloned().collect();
+            let mut list = have(&[
+                "nvidia/nemotron-3.5-super-vl-120b-a12b",
+                "moonshotai/kimi-k2.6",
+                "deepseek-ai/deepseek-v4.1-flash",
+                "nvidia/nemotron-3-super-120b-a12b",
+                "z-ai/glm-5.3-flash",
+                "minimaxai/minimax-m3.1-flash",
+                "openai/gpt-oss-120b",
+                "moonshotai/kimi-k2-instruct-0905",
+                "qwen/qwen3-235b-a22b",
+            ]);
+            let more: Vec<String> = ids.iter().filter(|id| id.contains("nemotron") && (id.contains("super") || id.contains("ultra")) && !list.contains(id)).cloned().collect();
             list.extend(more);
+            // The small ones last: they answer, and then flounder on a real job.
+            list.extend(have(&["openai/gpt-oss-20b", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"]));
             list
         }
         "deepseek" => {
